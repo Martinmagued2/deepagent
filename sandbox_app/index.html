@@ -2,82 +2,17 @@
 <html lang="en">
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Restaurant Menu</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expense Tracker</title>
+    <!-- Tailwind CDN guarantees utility styles render -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 
-<body>
-  <div class="container">
-    <header class="header">
-      <h1>Restaurant Menu</h1>
-      <div class="cart-icon" id="cartIcon">
-        <span id="cartCount">0</span>
-        🛒
-      </div>
-    </header>
-
-    <main class="main-content">
-      <section class="menu-section">
-        <h2>Menu Items</h2>
-        <div class="menu-grid" id="menuGrid">
-          <!-- Menu items will be dynamically generated -->
-        </div>
-      </section>
-
-      <section class="cart-section" id="cartSection" style="display: none;">
-        <h2>Your Cart</h2>
-        <div id="cartItems" class="cart-items">
-          <!-- Cart items will be dynamically generated -->
-        </div>
-        <div class="cart-total">
-          <h3>Total: $<span id="cartTotal">0.00</span></h3>
-          <button id="checkoutBtn" class="btn btn-primary">Checkout</button>
-        </div>
-      </section>
-
-      <section class="checkout-page" id="checkoutPage">
-        <div class="checkout-form">
-          <h2>Checkout</h2>
-          <div class="checkout-summary" id="checkoutSummary">
-            <!-- Cart summary will be dynamically generated -->
-          </div>
-          <form id="checkoutForm">
-            <div class="form-group">
-              <label for="customerName">Full Name *</label>
-              <input type="text" id="customerName" name="customerName" required>
-            </div>
-            <div class="form-group">
-              <label for="customerPhone">Phone Number *</label>
-              <input type="tel" id="customerPhone" name="customerPhone" required>
-            </div>
-            <div class="form-group">
-              <label for="customerAddress">Delivery Address *</label>
-              <textarea id="customerAddress" name="customerAddress" required></textarea>
-            </div>
-            <div class="checkout-actions">
-              <button type="button" id="backToMenuBtn" class="cancel-btn">Back to Menu</button>
-              <button type="submit" class="confirm-btn">Place Order</button>
-            </div>
-          </form>
-        </div>
-      </section>
-
-      <section class="order-confirmation" id="orderConfirmation">
-        <h2>Order Confirmed!</h2>
-        <p>Thank you for your order. Your order number is: <strong id="orderNumber"></strong></p>
-        <p>We will deliver your food shortly.</p>
-        <button id="newOrderBtn" class="btn btn-primary">Place New Order</button>
-      </section>
-    </main>
-
-    <footer class="footer">
-      <p>&copy; 2026 Restaurant Name. All rights reserved.</p>
-    </footer>
-  </div>
-
-  <script src="script.js" defer></script>
+<body class="bg-gray-50">
+    <div id="root"></div>
+    <script type="module" src="/script.jsx"></script>
 </body>
 
 </html>

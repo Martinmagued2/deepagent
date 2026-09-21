@@ -1,342 +1,244 @@
-// ============================================
-// Restaurant Menu Application
-// ============================================
+import React, { useState, useEffect } from 'react';
+import { createRoot } from 'react-dom/client';
+import Chart from 'chart.js/auto';
 
-// ============================================
-// Menu Data
-// ============================================
-const menuItems = [
-  {
-    id: 1,
-    name: 'Classic Burger',
-    description: 'Juicy beef patty with lettuce, tomato, cheese, and our special sauce.',
-    price: 12.99
-  },
-  {
-    id: 2,
-    name: 'Margherita Pizza',
-    description: 'Fresh mozzarella, tomatoes, basil, and olive oil on a crispy crust.',
-    price: 14.99
-  },
-  {
-    id: 3,
-    name: 'Caesar Salad',
-    description: 'Crisp romaine lettuce, parmesan, croutons, and Caesar dressing.',
-    price: 9.99
-  },
-  {
-    id: 4,
-    name: 'Grilled Salmon',
-    description: 'Fresh Atlantic salmon with herbs, served with seasonal vegetables.',
-    price: 19.99
-  },
-  {
-    id: 5,
-    name: 'Pasta Alfredo',
-    description: 'Creamy Alfredo sauce with fettuccine pasta and parmesan cheese.',
-    price: 13.99
-  },
-  {
-    id: 6,
-    name: 'Chocolate Cake',
-    description: 'Rich chocolate cake with a smooth ganache filling.',
-    price: 6.99
-  }
-];
+// Expense Tracker Application
+function ExpenseTracker() {
+  const [expenses, setExpenses] = useState([]);
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('food');
+  const [editingId, setEditingId] = useState(null);
+  const [chartData, setChartData] = useState({ labels: [], data: [] });
 
-// ============================================
-// App State
-// ============================================
-const AppState = {
-  cart: [],
-  currentView: 'menu',
-  orderNumber: null
-};
-
-// ============================================
-// Utility Functions
-// ============================================
-const Utils = {
-  formatPrice(price) {
-    return `$${price.toFixed(2)}`;
-  },
-
-  generateOrderNumber() {
-    return `ORD-${Date.now().toString().slice(-6)}`;
-  }
-};
-
-// ============================================
-// Cart Management
-// ============================================
-const Cart = {
-  key: 'restaurant-cart',
-
-  load() {
-    try {
-      const savedCart = localStorage.getItem(this.key);
-      AppState.cart = savedCart ? JSON.parse(savedCart) : [];
-    } catch {
-      AppState.cart = [];
+  // Load expenses from localStorage on initial render
+  useEffect(() => {
+    const savedExpenses = localStorage.getItem('expenses');
+    if (savedExpenses) {
+      setExpenses(JSON.parse(savedExpenses));
     }
-  },
+    updateChartData();
+  }, []);
 
-  save() {
-    localStorage.setItem(this.key, JSON.stringify(AppState.cart));
-  },
+  // Save expenses to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('expenses', JSON.stringify(expenses));
+    updateChartData();
+  }, [expenses]);
 
-  add(item) {
-    const existingItem = AppState.cart.find(cartItem => cartItem.id === item.id);
-    if (existingItem) {
-      existingItem.quantity += 1;
-    } else {
-      AppState.cart.push({
-        id: item.id,
-        name: item.name,
-        price: item.price,
-        quantity: 1
-      });
-    }
-    this.save();
-    UI.renderCart();
-  },
+  // Update chart data based on current expenses
+  const updateChartData = () => {
+    const categoryTotals = {};
+    expenses.forEach(expense => {
+      categoryTotals[expense.category] = (categoryTotals[expense.category] || 0) + parseFloat(expense.amount);
+    });
+    
+    setChartData({
+      labels: Object.keys(categoryTotals),
+      data: Object.values(categoryTotals)
+    });
+  };
 
-  remove(itemId) {
-    AppState.cart = AppState.cart.filter(item => item.id !== itemId);
-    this.save();
-    UI.renderCart();
-  },
-
-  updateQuantity(itemId, change) {
-    const item = AppState.cart.find(cartItem => cartItem.id === itemId);
-    if (!item) return;
-
-    item.quantity += change;
-    if (item.quantity <= 0) {
-      this.remove(itemId);
+  // Handle form submission
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    if (!description.trim() || !amount) {
+      alert('Please fill in all fields');
       return;
     }
 
-    this.save();
-    UI.renderCart();
-  },
-
-  getTotal() {
-    return AppState.cart.reduce((total, item) => total + (item.price * item.quantity), 0);
-  },
-
-  getItemCount() {
-    return AppState.cart.reduce((total, item) => total + item.quantity, 0);
-  },
-
-  clear() {
-    AppState.cart = [];
-    this.save();
-    UI.renderCart();
-  }
-};
-
-// ============================================
-// UI Renderer
-// ============================================
-const UI = {
-  elements: {},
-
-  init() {
-    this.elements = {
-      menuGrid: document.getElementById('menuGrid'),
-      cartIcon: document.getElementById('cartIcon'),
-      cartCount: document.getElementById('cartCount'),
-      cartSection: document.getElementById('cartSection'),
-      cartItems: document.getElementById('cartItems'),
-      cartTotal: document.getElementById('cartTotal'),
-      checkoutBtn: document.getElementById('checkoutBtn'),
-      checkoutPage: document.getElementById('checkoutPage'),
-      checkoutForm: document.getElementById('checkoutForm'),
-      checkoutSummary: document.getElementById('checkoutSummary'),
-      orderConfirmation: document.getElementById('orderConfirmation'),
-      orderNumber: document.getElementById('orderNumber')
+    const newExpense = {
+      id: Date.now(),
+      description: description.trim(),
+      amount: parseFloat(amount),
+      category,
+      date: new Date().toISOString()
     };
-  },
 
-  renderMenu() {
-    this.elements.menuGrid.innerHTML = '';
-
-    menuItems.forEach(item => {
-      const itemEl = document.createElement('div');
-      itemEl.className = 'menu-item';
-      itemEl.dataset.id = item.id;
-      itemEl.innerHTML = `
-        <h3>${item.name}</h3>
-        <p class="description">${item.description}</p>
-        <div class="price">${Utils.formatPrice(item.price)}</div>
-        <button class="add-btn" data-id="${item.id}">Add to Cart</button>
-      `;
-      this.elements.menuGrid.appendChild(itemEl);
-    });
-
-    this.elements.menuGrid.addEventListener('click', (e) => {
-      const button = e.target.closest('.add-btn');
-      if (!button) return;
-
-      const item = menuItems.find(menuItem => menuItem.id === parseInt(button.dataset.id));
-      if (item) {
-        Cart.add(item);
-        button.textContent = 'Added to Cart';
-        button.classList.add('added');
-        setTimeout(() => {
-          button.textContent = 'Add to Cart';
-          button.classList.remove('added');
-        }, 1000);
-      }
-    });
-  },
-
-  renderCart() {
-    this.elements.cartItems.innerHTML = '';
-    this.elements.cartCount.textContent = Cart.getItemCount();
-
-    if (AppState.cart.length === 0) {
-      this.elements.cartSection.style.display = 'none';
-      return;
+    if (editingId) {
+      // Update existing expense
+      setExpenses(expenses.map(expense => 
+        expense.id === editingId ? newExpense : expense
+      ));
+      setEditingId(null);
+    } else {
+      // Add new expense
+      setExpenses([...expenses, newExpense]);
     }
 
-    this.elements.cartSection.style.display = 'block';
+    // Reset form
+    setDescription('');
+    setAmount('');
+    setCategory('food');
+  };
 
-    AppState.cart.forEach(item => {
-      const itemEl = document.createElement('div');
-      itemEl.className = 'cart-item';
-      itemEl.innerHTML = `
-        <div class="cart-item-info">
-          <h4>${item.name}</h4>
-          <div class="item-price">${Utils.formatPrice(item.price)} x ${item.quantity}</div>
-        </div>
-        <div class="cart-item-actions">
-          <button class="qty-btn" data-action="decrease" data-id="${item.id}">-</button>
-          <span>${item.quantity}</span>
-          <button class="qty-btn" data-action="increase" data-id="${item.id}">+</button>
-          <button class="remove-btn" data-id="${item.id}">Remove</button>
-        </div>
-      `;
-      this.elements.cartItems.appendChild(itemEl);
-    });
+  // Handle edit expense
+  const handleEdit = (expense) => {
+    setDescription(expense.description);
+    setAmount(expense.amount.toString());
+    setCategory(expense.category);
+    setEditingId(expense.id);
+  };
 
-    this.elements.cartItems.addEventListener('click', (e) => {
-      const button = e.target.closest('button');
-      if (!button) return;
-
-      const itemId = parseInt(button.dataset.id);
-      const action = button.dataset.action;
-
-      if (action === 'increase') {
-        Cart.updateQuantity(itemId, 1);
-      } else if (action === 'decrease') {
-        Cart.updateQuantity(itemId, -1);
-      } else if (button.classList.contains('remove-btn')) {
-        Cart.remove(itemId);
-      }
-    });
-
-    this.elements.cartTotal.textContent = Cart.getTotal().toFixed(2);
-  },
-
-  showView(view) {
-    AppState.currentView = view;
-
-    const menuSection = document.querySelector('.menu-section');
-    const cartSection = document.getElementById('cartSection');
-    const checkoutPage = document.getElementById('checkoutPage');
-    const orderConfirmation = document.getElementById('orderConfirmation');
-
-    menuSection.style.display = view === 'menu' ? 'block' : 'none';
-    cartSection.style.display = view === 'menu' && AppState.cart.length > 0 ? 'block' : 'none';
-    checkoutPage.style.display = view === 'checkout' ? 'block' : 'none';
-    orderConfirmation.style.display = view === 'confirmation' ? 'block' : 'none';
-
-    if (view === 'checkout') {
-      this.renderCheckout();
+  // Handle delete expense
+  const handleDelete = (id) => {
+    if (confirm('Are you sure you want to delete this expense?')) {
+      setExpenses(expenses.filter(expense => expense.id !== id));
     }
-  },
+  };
 
-  renderCheckout() {
-    this.elements.checkoutSummary.innerHTML = '';
+  // Calculate total expenses
+  const totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
 
-    AppState.cart.forEach(item => {
-      const summaryItem = document.createElement('div');
-      summaryItem.className = 'summary-item';
-      summaryItem.innerHTML = `
-        <span>${item.name} x ${item.quantity}</span>
-        <span>${Utils.formatPrice(item.price * item.quantity)}</span>
-      `;
-      this.elements.checkoutSummary.appendChild(summaryItem);
-    });
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-4xl mx-auto">
+        <header className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">Expense Tracker</h1>
+          <p className="text-gray-600">Track your spending and visualize your expenses</p>
+        </header>
 
-    const totalItem = document.createElement('div');
-    totalItem.className = 'summary-total';
-    totalItem.innerHTML = `
-      <span>Total</span>
-      <span>${Utils.formatPrice(Cart.getTotal())}</span>
-    `;
-    this.elements.checkoutSummary.appendChild(totalItem);
-  },
+        {/* Add/Edit Expense Form */}
+        <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-4">{editingId ? 'Edit Expense' : 'Add New Expense'}</h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter expense description"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter amount"
+                />
+              </div>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="food">Food & Dining</option>
+                <option value="transport">Transportation</option>
+                <option value="shopping">Shopping</option>
+                <option value="entertainment">Entertainment</option>
+                <option value="bills">Bills & Utilities</option>
+                <option value="health">Health & Fitness</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setDescription('');
+                  setAmount('');
+                  setCategory('food');
+                  setEditingId(null);
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 mr-2"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+              >
+                {editingId ? 'Update Expense' : 'Add Expense'}
+              </button>
+            </div>
+          </form>
+        </div>
 
-  showOrderConfirmation() {
-    this.elements.orderNumber.textContent = AppState.orderNumber;
-    this.showView('confirmation');
-  }
-};
+        {/* Expenses Summary */}
+        <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Expenses Summary</h2>
+            <span className="text-2xl font-bold text-green-600">${totalExpenses.toFixed(2)}</span>
+          </div>
+          
+          {/* Chart */}
+          {chartData.labels.length > 0 && (
+            <div className="h-64 mb-6">
+              <canvas id="expenseChart"></canvas>
+            </div>
+          )}
+          
+          {/* Empty state */}
+          {expenses.length === 0 && (
+            <p className="text-center text-gray-500 py-8">No expenses yet. Add your first expense above!</p>
+          )}
+        </div>
 
-// ============================================
-// Events
-// ============================================
-const Events = {
-  setup() {
-    UI.elements.cartIcon.addEventListener('click', () => {
-      if (AppState.cart.length === 0) {
-        UI.showView('menu');
-        return;
-      }
-      UI.showView('menu');
-    });
+        {/* Expenses List */}
+        <div className="bg-white rounded-xl shadow-md p-6">
+          <h2 className="text-xl font-semibold mb-6">All Expenses</h2>
+          
+          {expenses.length > 0 ? (
+            <div className="space-y-4">
+              {expenses
+                .sort((a, b) => new Date(b.date) - new Date(a.date)) // Newest first
+                .map((expense) => (
+                  <div key={expense.id} className="border-b pb-4 last:border-b-0 last:pb-0">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h3 className="font-medium text-gray-800">{expense.description}</h3>
+                        <p className="text-sm text-gray-500">
+                          {expense.category} • {new Date(expense.date).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="text-right space-x-2">
+                        <span className="font-bold text-red-600">${expense.amount.toFixed(2)}</span>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleEdit(expense)}
+                            className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs rounded hover:bg-yellow-200"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDelete(expense.id)}
+                            className="px-3 py-1 bg-red-100 text-red-800 text-xs rounded hover:bg-red-200"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <p className="text-center text-gray-500 py-8">No expenses to display</p>
+          )}
+        </div>
+      </div>
 
-    UI.elements.checkoutBtn.addEventListener('click', () => {
-      UI.showView('checkout');
-    });
+      {/* Footer */}
+      <footer className="mt-12 text-center text-sm text-gray-500">
+        Expense Tracker • Built with React & Tailwind CSS
+      </footer>
+    </div>
+  );
+}
 
-    UI.elements.checkoutForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-
-      const name = document.getElementById('customerName').value.trim();
-      const phone = document.getElementById('customerPhone').value.trim();
-      const address = document.getElementById('customerAddress').value.trim();
-
-      if (!name || !phone || !address) {
-        alert('Please fill in all required fields.');
-        return;
-      }
-
-      AppState.orderNumber = Utils.generateOrderNumber();
-      Cart.clear();
-      UI.showOrderConfirmation();
-    });
-
-    document.getElementById('backToMenuBtn').addEventListener('click', () => {
-      UI.showView('menu');
-    });
-
-    document.getElementById('newOrderBtn').addEventListener('click', () => {
-      UI.showView('menu');
-    });
-  }
-};
-
-// ============================================
-// Initialize Application
-// ============================================
-document.addEventListener('DOMContentLoaded', () => {
-  UI.init();
-  Cart.load();
-  UI.renderMenu();
-  UI.renderCart();
-  Events.setup();
-});
+// Initialize the app
+const root = createRoot(document.getElementById('root'));
+root.render(<ExpenseTracker />);

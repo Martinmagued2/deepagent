@@ -1,6 +1,6 @@
 import os
 import subprocess
-from typing import TypedDict, List, Annotated
+from typing import TypedDict
 
 from dotenv import load_dotenv
 from langchain_openrouter import ChatOpenRouter
@@ -19,10 +19,6 @@ load_dotenv()
 if not os.getenv("OPENROUTER_API_KEY"):
     raise RuntimeError("OPENROUTER_API_KEY is missing from .env")
 
-# ============================================================
-# PROJECT DIRECTORY
-# ============================================================
-
 PROJECT_DIR = os.path.join(os.getcwd(), "generated_app")
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -39,28 +35,33 @@ class AgentState(TypedDict, total=False):
     max_repair_attempts: int
 
 # ============================================================
-# MODEL (Select a model supporting function calling)
+# MODELS
 # ============================================================
 
-model = ChatOpenRouter(
+fast_model = ChatOpenRouter(
     model="google/gemini-2.0-flash-exp:free",
     temperature=0
 )
 
+coding_model = ChatOpenRouter(
+    model="meta-llama/llama-3.3-70b-instruct:free",
+    temperature=0
+)
+
 # ============================================================
-# PROJECT TOOLS
+# TOOLS
 # ============================================================
 
 @tool
 def write_file(filename: str, content: str) -> str:
-    """Write content to a file inside the generated application."""
+    """Write content directly to a file inside the project directory."""
     filename = filename.replace("\\", "/").strip()
     if not filename:
         return "ERROR: Filename is empty."
 
     normalized = os.path.normpath(filename)
     if normalized.startswith("..") or os.path.isabs(normalized):
-        return "ERROR: Invalid file path outside project directory."
+        return "ERROR: Invalid file path."
 
     path = os.path.join(PROJECT_DIR, normalized)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -73,7 +74,7 @@ def write_file(filename: str, content: str) -> str:
 
 @tool
 def read_file(filename: str) -> str:
-    """Read a text file from the generated application."""
+    """Read a text file from the project directory."""
     filename = filename.replace("\\", "/").strip()
     normalized = os.path.normpath(filename)
 
@@ -93,7 +94,7 @@ def read_file(filename: str) -> str:
 
 @tool
 def list_files() -> str:
-    """List all files inside the generated application."""
+    """List all workspace files in the project directory."""
     ignored = {".git", ".venv", "__pycache__", "node_modules", "dist", "build"}
     files = []
 
@@ -104,15 +105,18 @@ def list_files() -> str:
             relative = os.path.relpath(path, PROJECT_DIR)
             files.append(relative.replace("\\", "/"))
 
-    if not files:
-        return "PROJECT IS EMPTY"
-
-    return "\n".join(sorted(files))
+    return "\n".join(sorted(files)) if files else "PROJECT IS EMPTY"
 
 
 @tool
 def run_command(command: str) -> str:
-    """Run a command inside the generated application directory."""
+    """
+    Run terminal commands (e.g., npm install, npm run build).
+    DO NOT use this tool for 'echo' or log messages. Use write_file() to create files.
+    """
+    if command.strip().startswith("echo "):
+        return "ERROR: Do not use run_command with echo. Stop logging and proceed with write_file()."
+
     print(f"\n[AGENT COMMAND] {command}")
     try:
         result = subprocess.run(
@@ -126,9 +130,12 @@ def run_command(command: str) -> str:
 
         output = [f"EXIT CODE: {result.returncode}"]
         if result.stdout:
-            output.append(f"STDOUT:\n{result.stdout}")
+            stdout_clean = result.stdout[-1500:] if len(result.stdout) > 1500 else result.stdout
+            output.append(f"STDOUT:\n{stdout_clean}")
+
         if result.stderr:
-            output.append(f"STDERR:\n{result.stderr}")
+            stderr_clean = result.stderr[-1500:] if len(result.stderr) > 1500 else result.stderr
+            output.append(f"STDERR:\n{stderr_clean}")
 
         return "\n".join(output)
     except subprocess.TimeoutExpired:
@@ -136,82 +143,62 @@ def run_command(command: str) -> str:
     except Exception as error:
         return f"ERROR: {error}"
 
+
 # ============================================================
-# DEEP AGENT
+# AGENT DELEGATE
 # ============================================================
 
 builder_agent = create_deep_agent(
-    model=model,
+    model=coding_model,
     tools=[write_file, read_file, list_files, run_command]
 )
 
 # ============================================================
-# PLANNER
+# NODES
 # ============================================================
 
 def planner_node(state: AgentState):
-    user_request = state["user_request"]
-
     print("\n" + "=" * 70)
-    print("PLANNER")
+    print(">>> NODE: PLANNER")
     print("=" * 70)
 
-    prompt = f"""
-You are a senior software architect.
-Analyze the user's application request below and create a practical implementation plan.
+    prompt = f"Create a concise technical implementation plan for: {state['user_request']}"
+    response = fast_model.invoke([HumanMessage(content=prompt)])
+    return {"project_plan": response.content, "status": "planned"}
 
-USER REQUEST:
-{user_request}
-
-Return a concise implementation plan covering:
-1. Application type & tech stack
-2. Core dependencies & build tool
-3. File structure
-4. Testing & startup requirements
-"""
-    response = model.invoke([HumanMessage(content=prompt)])
-    plan = response.content
-
-    print(f"\n{plan}")
-    return {"project_plan": plan}
-
-# ============================================================
-# BUILDER
-# ============================================================
 
 def builder_node(state: AgentState):
     print("\n" + "=" * 70)
-    print("BUILDER AGENT")
+    print(">>> NODE: BUILDER")
     print("=" * 70)
 
     prompt = f"""
-You are an autonomous senior software engineer working in: {PROJECT_DIR}
+You are an autonomous engineer working inside {PROJECT_DIR}.
 
-USER REQUEST:
-{state["user_request"]}
+REQUEST:
+{state['user_request']}
 
-ARCHITECTURE PLAN:
-{state["project_plan"]}
+PLAN:
+{state['project_plan']}
 
-Use write_file(), read_file(), list_files(), and run_command() to generate the application.
-Ensure all files exist and required dependencies are installed.
+CRITICAL SCAFFOLDING RULES:
+1. DO NOT run interactive scaffolding tools like `npm create vite` or `npm init` that wait for terminal input.
+2. Instead, create `package.json`, `vite.config.js`, `index.html`, and `src/` files directly using write_file().
+3. Include required dependencies (e.g., vite, react, react-dom, tailwindcss, lucide-react, recharts) directly in package.json.
+4. Run `npm install` via run_command() after creating package.json.
+5. DO NOT run echo commands via run_command().
 """
-
     builder_agent.invoke({"messages": [{"role": "user", "content": prompt}]})
     return {"status": "built"}
 
-# ============================================================
-# BUILD CHECK
-# ============================================================
 
 def build_check_node(state: AgentState):
     print("\n" + "=" * 70)
-    print("BUILD CHECK")
+    print(">>> NODE: BUILD CHECK")
     print("=" * 70)
 
     package_json = os.path.join(PROJECT_DIR, "package.json")
     if os.path.exists(package_json):
-        print("Detected Node.js project. Running build check...")
         result = subprocess.run(
             "npm run build",
             shell=True,
@@ -220,40 +207,35 @@ def build_check_node(state: AgentState):
             text=True,
             timeout=120
         )
-        output = (result.stdout or "") + (result.stderr or "")
-
+        output = ((result.stdout or "") + (result.stderr or ""))[-1500:]
         if result.returncode == 0:
             print("BUILD PASSED")
             return {"test_report": f"BUILD PASSED\n\n{output}"}
-
+        
         print("BUILD FAILED")
         return {"test_report": f"BUILD FAILED\n\n{output}"}
 
-    print("No package.json detected. Skipping Node build check.")
+    print("No package.json detected. Build check skipped.")
     return {"test_report": "No package.json detected. Build check skipped."}
 
-# ============================================================
-# ROUTER AFTER BUILD
-# ============================================================
 
 def route_after_build(state: AgentState):
     report = state.get("test_report", "")
     if "BUILD FAILED" in report:
+        print(">>> ROUTER: Build failed -> Routing to REPAIR")
         return "repair"
+    print(">>> ROUTER: Build passed/skipped -> Routing to EVALUATOR")
     return "evaluate"
 
-# ============================================================
-# EVALUATOR
-# ============================================================
 
 def evaluator_node(state: AgentState):
     print("\n" + "=" * 70)
-    print("EVALUATOR")
+    print(">>> NODE: EVALUATOR")
     print("=" * 70)
 
     evaluator_path = os.path.join(os.getcwd(), "evaluator.py")
     if not os.path.exists(evaluator_path):
-        print("evaluator.py does not exist. Passing by default.")
+        print("evaluator.py not found. Skipping.")
         return {"test_report": "EVALUATOR NOT FOUND - SKIPPED", "status": "passed"}
 
     try:
@@ -265,8 +247,7 @@ def evaluator_node(state: AgentState):
             text=True,
             timeout=180
         )
-        output = (result.stdout or "") + (result.stderr or "")
-
+        output = ((result.stdout or "") + (result.stderr or ""))[-1500:]
         if result.returncode == 0:
             print("EVALUATION PASSED")
             return {"test_report": output, "status": "passed"}
@@ -277,48 +258,46 @@ def evaluator_node(state: AgentState):
     except subprocess.TimeoutExpired:
         return {"test_report": "EVALUATOR TIMED OUT.", "status": "failed"}
 
-# ============================================================
-# ROUTER AFTER EVALUATION
-# ============================================================
 
 def route_after_evaluation(state: AgentState):
     if state.get("status") == "passed":
+        print(">>> ROUTER: Evaluation passed -> Terminating graph (END)")
         return "done"
 
     attempts = state.get("repair_attempts", 0)
     max_attempts = state.get("max_repair_attempts", 3)
 
     if attempts >= max_attempts:
-        print("Max repair attempts reached.")
+        print(f">>> ROUTER: Reached max repair attempts ({max_attempts}) -> Terminating graph (END)")
         return "done"
 
+    print(f">>> ROUTER: Evaluation failed -> Routing to REPAIR (Attempt {attempts + 1}/{max_attempts})")
     return "repair"
 
-# ============================================================
-# REPAIR
-# ============================================================
 
 def repair_node(state: AgentState):
     attempts = state.get("repair_attempts", 0) + 1
-
     print("\n" + "=" * 70)
-    print(f"REPAIR AGENT — ATTEMPT {attempts}")
+    print(f">>> NODE: REPAIR (ATTEMPT {attempts})")
     print("=" * 70)
 
+    report = state.get("test_report", "")[-1200:]
     prompt = f"""
-The application failed build/evaluation. Diagnose and fix the root cause inside {PROJECT_DIR}.
+Fix the failing application in {PROJECT_DIR}.
 
-ORIGINAL REQUEST:
-{state["user_request"]}
+REQUEST:
+{state['user_request']}
 
-TEST / BUILD REPORT:
-{state.get("test_report", "")}
+FAILURE REPORT:
+{report}
 
-Use read_file(), write_file(), list_files(), and run_command() to repair the issues.
+1. Inspect project files with list_files() and read_file().
+2. Fix root causes using write_file().
+3. Do NOT execute echo commands.
 """
-
     builder_agent.invoke({"messages": [{"role": "user", "content": prompt}]})
     return {"repair_attempts": attempts, "status": "repairing"}
+
 
 # ============================================================
 # GRAPH CONSTRUCTION
@@ -351,34 +330,3 @@ graph_builder.add_conditional_edges(
 graph_builder.add_edge("repair", "build_check")
 
 app = graph_builder.compile()
-
-# ============================================================
-# RUN GRAPH
-# ============================================================
-
-if __name__ == "__main__":
-    print("\n" + "=" * 70)
-    print("LANGGRAPH AI SOFTWARE ENGINEER")
-    print("=" * 70)
-
-    user_request = input("\nWhat should I build?\n\n> ").strip()
-
-    if not user_request:
-        raise RuntimeError("No application request was provided.")
-
-    initial_state: AgentState = {
-        "user_request": user_request,
-        "project_plan": "",
-        "test_report": "",
-        "status": "starting",
-        "repair_attempts": 0,
-        "max_repair_attempts": 3
-    }
-
-    result = app.invoke(initial_state)
-
-    print("\n" + "=" * 70)
-    print("LANGGRAPH FINISHED")
-    print("=" * 70)
-    print(f"STATUS: {result.get('status')}")
-    print(f"REPAIR ATTEMPTS: {result.get('repair_attempts', 0)}")

@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+sandbox_app/
 
 # Virtual environments
 .venv
