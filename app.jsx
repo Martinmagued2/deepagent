@@ -60,6 +60,9 @@ function NexusStudioApp() {
   var [activeView, setActiveView] = useState('explorer');
   var [bottomTab, setBottomTab] = useState('terminal');
   var [showPreview, setShowPreview] = useState(true);
+  var [showAgentPanel, setShowAgentPanel] = useState(true);  // toggleable agent panel
+  var [showBottomPanel, setShowBottomPanel] = useState(true);  // toggleable bottom panel
+  var [showSidebar, setShowSidebar] = useState(true);  // toggleable sidebar
   var [showNewProjectModal, setShowNewProjectModal] = useState(false);
   var [showSettingsModal, setShowSettingsModal] = useState(false);
   var [showOnboarding, setShowOnboarding] = useState(false);
@@ -669,8 +672,8 @@ function NexusStudioApp() {
 
         <div className="topbar-center">
           <span>📁 {activeProject.name || 'No Project Open'}</span>
-          <button className="icon-btn-sm" onClick={function() { setShowNewProjectModal(true); }} title="New Project (Ctrl+P)">+</button>
-          <button className="icon-btn-sm" onClick={function() {
+          <button className="icon-btn" onClick={function() { setShowNewProjectModal(true); }} title="New Project (Ctrl+P)">+</button>
+          <button className="icon-btn" onClick={function() {
             var p = prompt('Open project folder path:');
             if (p) {
               fetch('/api/project/open', {
@@ -682,9 +685,9 @@ function NexusStudioApp() {
             }
           }} title="Open Folder">📂</button>
           {devServer.running ? (
-            <button className="icon-btn-sm" onClick={stopDevServer} title="Stop Dev Server (port {devServer.port})">⏹</button>
+            <button className="icon-btn" onClick={stopDevServer} title="Stop Dev Server">⏹</button>
           ) : (
-            <button className="icon-btn-sm" onClick={startDevServer} title="Start Dev Server">▶</button>
+            <button className="icon-btn" onClick={startDevServer} title="Start Dev Server">▶</button>
           )}
         </div>
 
@@ -693,35 +696,41 @@ function NexusStudioApp() {
             <div className="pill-dot"></div>
             <span>{settings.ai.provider_name} · {settings.ai.model.split('/').pop()}</span>
           </div>
-          <button className="icon-btn-sm" onClick={function() { setShowPreview(!showPreview); }} title="Toggle Preview">👁</button>
-          <button className="icon-btn-sm" onClick={saveCurrentFile} title="Save (Ctrl+S)">💾</button>
-          <button className="icon-btn-sm" onClick={function() { setShowSettingsModal(true); }} title="Settings (Ctrl+,)">⚙</button>
+          <button className="icon-btn" onClick={function() { setShowPreview(!showPreview); }} title="Toggle Preview">👁</button>
+          <button className="icon-btn" onClick={saveCurrentFile} title="Save (Ctrl+S)">💾</button>
+          <button className="icon-btn" onClick={function() { setShowSettingsModal(true); }} title="Settings (Ctrl+,)">⚙</button>
         </div>
       </header>
 
       {/* ===== WORKBENCH ===== */}
-      <div className="nexus-workbench">
+      <div className={"nexus-workbench" + (showAgentPanel ? '' : ' no-agent') + (showSidebar ? '' : ' no-sidebar')}>
         {/* Activity Bar */}
         <aside className="activity-bar">
-          <button className={"activity-btn " + (activeView === 'explorer' ? 'active' : '')} onClick={function() { setActiveView('explorer'); }} title="Explorer">📁</button>
-          <button className={"activity-btn " + (activeView === 'search' ? 'active' : '')} onClick={function() { setActiveView('search'); }} title="Search">🔍</button>
-          <button className={"activity-btn " + (activeView === 'git' ? 'active' : '')} onClick={function() { setActiveView('git'); loadGitStatus(); loadGitLog(); }} title="Source Control">🌿</button>
-          <button className={"activity-btn " + (activeView === 'experience' ? 'active' : '')} onClick={function() { setActiveView('experience'); loadExperiences(); }} title="NexusAI Network">🌐</button>
-          <div className="activity-bottom">
-            <button className="activity-btn" onClick={function() { setShowSettingsModal(true); }} title="Settings">⚙</button>
-          </div>
+          <button className={"activity-btn " + (activeView === 'explorer' && showSidebar ? 'active' : '')} onClick={function() { if (activeView === 'explorer' && showSidebar) { setShowSidebar(false); } else { setActiveView('explorer'); setShowSidebar(true); } }} title="Explorer">📁</button>
+          <button className={"activity-btn " + (activeView === 'search' && showSidebar ? 'active' : '')} onClick={function() { if (activeView === 'search' && showSidebar) { setShowSidebar(false); } else { setActiveView('search'); setShowSidebar(true); } }} title="Search">🔍</button>
+          <button className={"activity-btn " + (activeView === 'git' && showSidebar ? 'active' : '')} onClick={function() { if (activeView === 'git' && showSidebar) { setShowSidebar(false); } else { setActiveView('git'); setShowSidebar(true); loadGitStatus(); loadGitLog(); } }} title="Source Control">🌿
+            {gitStatus.changes && gitStatus.changes.length > 0 && <span className="activity-badge">{gitStatus.changes.length}</span>}
+          </button>
+          <button className={"activity-btn " + (activeView === 'experience' && showSidebar ? 'active' : '')} onClick={function() { if (activeView === 'experience' && showSidebar) { setShowSidebar(false); } else { setActiveView('experience'); setShowSidebar(true); loadExperiences(); } }} title="NexusAI Network">🌐</button>
+
+          <div style={{ flex: 1 }}></div>
+
+          <button className={"activity-btn " + (showAgentPanel ? 'active' : '')} onClick={function() { setShowAgentPanel(!showAgentPanel); }} title="Toggle AI Agent">🤖</button>
+          <button className={"activity-btn " + (showBottomPanel ? 'active' : '')} onClick={function() { setShowBottomPanel(!showBottomPanel); }} title="Toggle Panel">▤</button>
+          <button className="activity-btn" onClick={function() { setShowSettingsModal(true); }} title="Settings">⚙</button>
         </aside>
 
         {/* Sidebar */}
+        {showSidebar && (
         <div className="workbench-sidebar">
           {activeView === 'explorer' && (
             <React.Fragment>
               <div className="sidebar-header">
                 <span>Explorer</span>
                 <div className="sidebar-actions">
-                  <button className="icon-btn-sm" onClick={function() { createFileOrDir('', false); }} title="New File">📄</button>
-                  <button className="icon-btn-sm" onClick={function() { createFileOrDir('', true); }} title="New Folder">📁</button>
-                  <button className="icon-btn-sm" onClick={loadWorkspaceTree} title="Refresh">🔄</button>
+                  <button className="icon-btn" onClick={function() { createFileOrDir('', false); }} title="New File">📄</button>
+                  <button className="icon-btn" onClick={function() { createFileOrDir('', true); }} title="New Folder">📁</button>
+                  <button className="icon-btn" onClick={loadWorkspaceTree} title="Refresh">🔄</button>
                 </div>
               </div>
               <div className="sidebar-content">
@@ -769,9 +778,9 @@ function NexusStudioApp() {
               <div className="sidebar-header">
                 <span>Source Control</span>
                 <div className="sidebar-actions">
-                  <button className="icon-btn-sm" onClick={function() { handleGitAction('pull'); }} title="Pull">⬇</button>
-                  <button className="icon-btn-sm" onClick={function() { handleGitAction('push'); }} title="Push">⬆</button>
-                  <button className="icon-btn-sm" onClick={loadGitStatus} title="Refresh">🔄</button>
+                  <button className="icon-btn" onClick={function() { handleGitAction('pull'); }} title="Pull">⬇</button>
+                  <button className="icon-btn" onClick={function() { handleGitAction('push'); }} title="Push">⬆</button>
+                  <button className="icon-btn" onClick={loadGitStatus} title="Refresh">🔄</button>
                 </div>
               </div>
               <div className="sidebar-content">
@@ -831,7 +840,7 @@ function NexusStudioApp() {
             <React.Fragment>
               <div className="sidebar-header">
                 <span>NexusAI Network</span>
-                <button className="icon-btn-sm" onClick={loadExperiences} title="Refresh">🔄</button>
+                <button className="icon-btn" onClick={loadExperiences} title="Refresh">🔄</button>
               </div>
               <div className="sidebar-content">
                 <input
@@ -869,9 +878,10 @@ function NexusStudioApp() {
             </React.Fragment>
           )}
         </div>
+        )}
 
         {/* Center Editor */}
-        <div className="workbench-center">
+        <div className={"workbench-center" + (showBottomPanel ? '' : ' no-bottom')}>
           {/* Tabs */}
           <div className="editor-tabs">
             {openTabs.length === 0 ? (
@@ -893,7 +903,7 @@ function NexusStudioApp() {
           </div>
 
           {/* Monaco + Preview */}
-          <div className="editor-workspace-view">
+          <div className={"editor-workspace-view" + (showPreview ? '' : ' no-preview')}>
             <div ref={editorContainerRef} className="monaco-container"></div>
 
             {showPreview && (
@@ -903,7 +913,7 @@ function NexusStudioApp() {
                   <div className="preview-url">
                     {devServer.running ? devServer.url : '/sandbox/index.html'}
                   </div>
-                  <button className="icon-btn-sm" onClick={refreshPreview} title="Refresh">🔄</button>
+                  <button className="icon-btn" onClick={refreshPreview} title="Refresh">🔄</button>
                 </div>
                 {devServer.running ? (
                   <iframe ref={previewIframeRef} className="preview-iframe" src={devServer.url}></iframe>
@@ -915,6 +925,7 @@ function NexusStudioApp() {
           </div>
 
           {/* Bottom Panel */}
+          {showBottomPanel && (
           <div className="bottom-panel">
             <div className="bottom-panel-tabs">
               <span className={"bottom-tab " + (bottomTab === 'terminal' ? 'active' : '')} onClick={function() { setBottomTab('terminal'); }}>Terminal</span>
@@ -923,6 +934,8 @@ function NexusStudioApp() {
               </span>
               <span className={"bottom-tab " + (bottomTab === 'output' ? 'active' : '')} onClick={function() { setBottomTab('output'); }}>Output</span>
               <span className={"bottom-tab " + (bottomTab === 'agent_logs' ? 'active' : '')} onClick={function() { setBottomTab('agent_logs'); }}>Agent</span>
+              <span style={{ flex: 1 }}></span>
+              <span className="bottom-tab" style={{ cursor: 'pointer' }} onClick={function() { setShowBottomPanel(false); }} title="Close Panel">×</span>
             </div>
             <div className="bottom-panel-content">
               {bottomTab === 'terminal' && (
@@ -984,17 +997,22 @@ function NexusStudioApp() {
               )}
             </div>
           </div>
+          )}
         </div>
 
-        {/* Agent Panel (Right) */}
+        {/* Agent Panel (Right) — toggleable */}
+        {showAgentPanel && (
         <aside className="workbench-agent-panel">
           <div className="agent-panel-header">
             <span>🤖 NexusAI Agent</span>
-            {agentRunning ? (
-              <span className="agent-status">● Executing</span>
-            ) : (
-              <span className="agent-status idle">● Idle</span>
-            )}
+            <div className="flex items-center gap-2">
+              {agentRunning ? (
+                <span className="agent-status">● Executing</span>
+              ) : (
+                <span className="agent-status idle">● Idle</span>
+              )}
+              <button className="icon-btn" onClick={function() { setShowAgentPanel(false); }} title="Close Panel">×</button>
+            </div>
           </div>
 
           <div className="agent-timeline">
@@ -1033,13 +1051,14 @@ function NexusStudioApp() {
             </button>
           </div>
         </aside>
+        )}
       </div>
 
-      {/* ===== STATUS BAR ===== */}
-      <div className="status-bar" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 24, zIndex: 100 }}>
+      {/* ===== STATUS BAR (part of grid, not fixed) ===== */}
+      <div className="status-bar">
         <div className="status-bar-section">
           <span className="status-bar-item">⎇ {gitStatus.branch || 'no-git'}</span>
-          {gitStatus.changes.length > 0 && <span className="status-bar-item">⚠ {gitStatus.changes.length} changes</span>}
+          {gitStatus.changes && gitStatus.changes.length > 0 && <span className="status-bar-item">⚠ {gitStatus.changes.length} changes</span>}
         </div>
         <div className="status-bar-section">
           {devServer.running && <span className="status-bar-item">▶ Port {devServer.port}</span>}
@@ -1079,7 +1098,7 @@ function NexusStudioApp() {
           <div className="modal-card wide" onClick={function(e) { e.stopPropagation(); }}>
             <div className="modal-header">
               <span>{diffViewer.title || 'Detail: ' + (diffViewer.path || '')}</span>
-              <button className="icon-btn-sm" onClick={function() { setDiffViewer(null); }}>×</button>
+              <button className="icon-btn" onClick={function() { setDiffViewer(null); }}>×</button>
             </div>
             <div className="modal-body">
               {diffViewer.command && (
@@ -1246,7 +1265,7 @@ function SettingsModal(props) {
       <div className="modal-card wide full" onClick={function(e) { e.stopPropagation(); }}>
         <div className="modal-header">
           <span>⚙ Settings</span>
-          <button className="icon-btn-sm" onClick={props.onClose}>×</button>
+          <button className="icon-btn" onClick={props.onClose}>×</button>
         </div>
         <div className="settings-layout" style={{ height: '70vh' }}>
           <div className="settings-nav">
@@ -1503,7 +1522,7 @@ function NewProjectModal(props) {
       <div className="modal-card" onClick={function(e) { e.stopPropagation(); }}>
         <div className="modal-header">
           <span>📁 Create / Open Project</span>
-          <button className="icon-btn-sm" onClick={props.onClose}>×</button>
+          <button className="icon-btn" onClick={props.onClose}>×</button>
         </div>
         <div className="modal-body">
           <div className="form-group">
