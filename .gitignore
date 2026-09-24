@@ -10,3 +10,7 @@ sandbox_app/
 # Virtual environments
 .venv
 .env
+.nexus_config.json
+.nexus_credentials.enc
+.nexus_projects.json
+.nexus_experiences.json
