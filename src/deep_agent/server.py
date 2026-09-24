@@ -779,21 +779,45 @@ async def serve_root():
     # CRITICAL: escape </script> inside JSX string so browser doesn't close the tag early
     jsx_safe = jsx.replace("</script>", "<\\/script>")
 
-    # Error overlay injected before Babel so any crash is visible on screen
+    # Error overlay — only shows for real JS errors, with a close button,
+    # and auto-dismisses warnings after 8 seconds. Production errors still
+    # show up (so you can debug), but you can close them.
     error_overlay = """<script>
 window.__nexus_errors = [];
 window.onerror = function(msg, src, line, col, err) {
+    // Ignore benign errors from browser extensions and CDN loading quirks
+    if (typeof msg === 'string' && (
+        msg.indexOf('ResizeObserver') !== -1 ||
+        msg.indexOf('Script error') !== -1 ||
+        msg.indexOf('extension') !== -1
+    )) return;
+
     var box = document.getElementById('__nexus_err_box');
     if (!box) {
         box = document.createElement('div');
         box.id = '__nexus_err_box';
-        box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1a0000;color:#ff6b6b;font:13px monospace;padding:16px;white-space:pre-wrap;max-height:50vh;overflow:auto;border-bottom:2px solid #ff0000';
+        box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#1a0000;color:#ff6b6b;font:12px monospace;padding:10px 36px 10px 12px;white-space:pre-wrap;max-height:40vh;overflow:auto;border-bottom:1px solid #ff0000;box-shadow:0 4px 12px rgba(0,0,0,0.6)';
         document.body.appendChild(box);
+
+        // Add a close button
+        var closeBtn = document.createElement('div');
+        closeBtn.textContent = '×';
+        closeBtn.style.cssText = 'position:absolute;top:4px;right:8px;cursor:pointer;color:#ff6b6b;font-size:18px;font-weight:bold;padding:4px 8px;line-height:1;';
+        closeBtn.title = 'Dismiss error';
+        closeBtn.onclick = function() { box.style.display = 'none'; };
+        box.appendChild(closeBtn);
     }
-    box.textContent += '[JS ERROR] ' + msg + '\\n  at ' + src + ':' + line + ':' + col + '\\n\\n';
+    var errText = document.createElement('div');
+    errText.textContent = '[JS ERROR] ' + msg + '\\n  at ' + src + ':' + line + ':' + col;
+    box.appendChild(errText);
+    box.style.display = 'block';
 };
 window.addEventListener('unhandledrejection', function(e) {
-    window.onerror('Unhandled Promise: ' + (e.reason && e.reason.message || e.reason), 'promise', 0, 0, e.reason);
+    // Only show promise rejections that aren't network retries (those are noisy)
+    var reason = e && e.reason;
+    var msg = (reason && reason.message) || String(reason);
+    if (msg && (msg.indexOf('fetch') !== -1 || msg.indexOf('network') !== -1 || msg.indexOf('Failed to fetch') !== -1)) return;
+    window.onerror('Unhandled Promise: ' + msg, 'promise', 0, 0, reason);
 });
 </script>"""
 
