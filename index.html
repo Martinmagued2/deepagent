@@ -3,25 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NexusAI — Build anything with AI</title>
-    <meta name="description" content="Describe what you want to build. NexusAI generates the entire application, live.">
+    <title>NexusAI Studio — Autonomous AI Developer Environment</title>
+    <meta name="description" content="Next-Generation Desktop AI IDE & Autonomous Software Engineering Environment">
+    
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Monaco Editor Loader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+    <!-- Styles -->
     <link rel="stylesheet" href="style.css">
 
-    <!-- React 18 -->
+    <!-- React 18 & Babel -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel for JSX -->
     <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- App templates (plain JS — must load before app.jsx) -->
-    <script src="templates.js"></script>
 </head>
-<body>
+<body class="nexus-ide-body">
     <div id="root"></div>
-    <!-- Main app (JSX, transpiled by Babel) -->
     <script type="text/babel" src="app.jsx"></script>
 </body>
 </html>

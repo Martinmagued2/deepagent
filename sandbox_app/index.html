@@ -1,18 +1,222 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Expense Tracker</title>
-    <!-- Tailwind CDN guarantees utility styles render -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>SmartStudy</title>
     <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
 </head>
+<body>
+    <div id="app">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-icon">📚</div>
+                <h1 class="brand-text">SmartStudy</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-view="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Dashboard</span>
+                </button>
+                <button class="nav-item" data-view="courses">
+                    <span class="nav-icon">🎓</span>
+                    <span class="nav-label">Courses</span>
+                </button>
+                <button class="nav-item" data-view="calendar">
+                    <span class="nav-icon">📅</span>
+                    <span class="nav-label">Calendar</span>
+                </button>
+                <button class="nav-item" data-view="deadlines">
+                    <span class="nav-icon">⏰</span>
+                    <span class="nav-label">Deadlines</span>
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <button class="nav-item" id="clearDataBtn">
+                    <span class="nav-icon">🗑️</span>
+                    <span class="nav-label">Clear Data</span>
+                </button>
+            </div>
+        </aside>
 
-<body class="bg-gray-50">
-    <div id="root"></div>
-    <script type="module" src="/script.jsx"></script>
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+        <main class="main-content">
+            <header class="topbar">
+                <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu">☰</button>
+                <h2 class="page-title" id="pageTitle">Dashboard</h2>
+            </header>
+
+            <div class="content-area">
+                <!-- Dashboard View -->
+                <section class="view" id="dashboardView">
+                    <div class="stats-grid" id="statsGrid"></div>
+                    <div class="dashboard-sections">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Course Progress</h3>
+                            </div>
+                            <div class="card-body" id="courseProgressList"></div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Recent Tasks</h3>
+                            </div>
+                            <div class="card-body" id="recentTasksList"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Courses View -->
+                <section class="view hidden" id="coursesView">
+                    <div class="section-header">
+                        <h3>My Courses</h3>
+                        <button class="btn btn-primary" id="addCourseBtn">+ Add Course</button>
+                    </div>
+                    <div class="courses-grid" id="coursesGrid"></div>
+                </section>
+
+                <!-- Calendar View -->
+                <section class="view hidden" id="calendarView">
+                    <div class="section-header">
+                        <h3>Calendar</h3>
+                        <div class="calendar-nav">
+                            <button class="btn btn-sm" id="prevMonth">‹</button>
+                            <span class="calendar-month" id="calendarMonth"></span>
+                            <button class="btn btn-sm" id="nextMonth">›</button>
+                        </div>
+                    </div>
+                    <div class="calendar" id="calendar"></div>
+                </section>
+
+                <!-- Deadlines View -->
+                <section class="view hidden" id="deadlinesView">
+                    <div class="section-header">
+                        <h3>Upcoming Deadlines</h3>
+                        <div class="filter-group">
+                            <select class="input-sm" id="deadlineFilter">
+                                <option value="all">All Types</option>
+                                <option value="assignment">Assignments</option>
+                                <option value="exam">Exams</option>
+                            </select>
+                            <select class="input-sm" id="priorityFilter">
+                                <option value="all">All Priorities</option>
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="low">Low</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="deadlines-list" id="deadlinesList"></div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Add Course Modal -->
+    <div class="modal-overlay hidden" id="addCourseModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Add New Course</h3>
+                <button class="modal-close" id="closeAddCourseModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="courseName">Course Name</label>
+                    <input type="text" id="courseName" class="input" placeholder="e.g., Mathematics 101">
+                </div>
+                <div class="form-group">
+                    <label for="courseColor">Color</label>
+                    <div class="color-picker" id="courseColorPicker">
+                        <div class="color-option selected" data-color="#6366f1" style="background: #6366f1;"></div>
+                        <div class="color-option" data-color="#10b981" style="background: #10b981;"></div>
+                        <div class="color-option" data-color="#f59e0b" style="background: #f59e0b;"></div>
+                        <div class="color-option" data-color="#ef4444" style="background: #ef4444;"></div>
+                        <div class="color-option" data-color="#8b5cf6" style="background: #8b5cf6;"></div>
+                        <div class="color-option" data-color="#06b6d4" style="background: #06b6d4;"></div>
+                    </div>
+                    <input type="hidden" id="courseColor" value="#6366f1">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelAddCourse">Cancel</button>
+                <button class="btn btn-primary" id="saveCourse">Add Course</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Task Modal -->
+    <div class="modal-overlay hidden" id="addTaskModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="taskModalTitle">Add New Task</h3>
+                <button class="modal-close" id="closeAddTaskModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="taskId">
+                <div class="form-group">
+                    <label for="taskTitle">Task Title</label>
+                    <input type="text" id="taskTitle" class="input" placeholder="e.g., Complete Chapter 5">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="taskType">Type</label>
+                        <select id="taskType" class="input">
+                            <option value="assignment">Assignment</option>
+                            <option value="exam">Exam</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="taskPriority">Priority</label>
+                        <select id="taskPriority" class="input">
+                            <option value="low">Low</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="taskCourse">Course</label>
+                        <select id="taskCourse" class="input"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="taskDeadline">Deadline</label>
+                        <input type="datetime-local" id="taskDeadline" class="input">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelAddTask">Cancel</button>
+                <button class="btn btn-primary" id="saveTask">Save Task</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Detail Modal -->
+    <div class="modal-overlay hidden" id="taskDetailModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="taskDetailTitle">Task Details</h3>
+                <button class="modal-close" id="closeTaskDetail">&times;</button>
+            </div>
+            <div class="modal-body" id="taskDetailBody"></div>
+            <div class="modal-footer" id="taskDetailFooter"></div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div class="modal-overlay hidden" id="confirmModal">
+        <div class="modal modal-sm">
+            <div class="modal-body text-center">
+                <p id="confirmMessage" class="mb-4"></p>
+                <div class="flex gap-2 justify-center">
+                    <button class="btn btn-secondary" id="confirmNo">Cancel</button>
+                    <button class="btn btn-danger" id="confirmYes">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
-
 </html>

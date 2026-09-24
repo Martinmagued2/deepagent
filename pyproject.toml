@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "deepagents>=0.7.14",
     "fastapi>=0.141.1",
+    "langchain-openai>=1.6.6",
     "langchain-openrouter>=0.2.8",
     "langgraph>=1.2.11",
     "playwright>=1.63.0",

@@ -1,724 +1,886 @@
-/* NexusAI — Main application (React + Babel Standalone) */
+/* NexusAI Studio IDE — Full Desktop Developer Experience */
 /* eslint-disable */
 
-var useState  = React.useState;
+var useState = React.useState;
 var useEffect = React.useEffect;
-var useRef    = React.useRef;
+var useRef = React.useRef;
 var useCallback = React.useCallback;
 
-// ── Activity steps ───────────────────────────────────────────
-var STEPS = [
-  { id: 'understand', label: 'Understanding request'         },
-  { id: 'plan',       label: 'Planning application structure' },
-  { id: 'scaffold',   label: 'Creating project files'         },
-  { id: 'html',       label: 'Writing HTML structure'         },
-  { id: 'css',        label: 'Applying styles & layout'       },
-  { id: 'js',         label: 'Implementing interactions'      },
-  { id: 'test',       label: 'Running automated tests'        },
-  { id: 'check',      label: 'Verifying browser rendering'    },
-  { id: 'done',       label: 'Build complete'                 },
-];
-
-// ── Pick fallback template ────────────────────────────────────
-function pickTemplate(prompt) {
-  var t = window.NEXUS_TEMPLATES;
-  if (!t) return '';
-  var lc = prompt.toLowerCase();
-  if (lc.indexOf('expense') >= 0 || lc.indexOf('budget') >= 0 || lc.indexOf('finance') >= 0) return t.expense;
-  if (lc.indexOf('kanban') >= 0 || lc.indexOf('board') >= 0 || lc.indexOf('task') >= 0 || lc.indexOf('todo') >= 0) return t.kanban;
-  if (lc.indexOf('timer') >= 0 || lc.indexOf('clock') >= 0 || lc.indexOf('stopwatch') >= 0) return t.timer;
-  return t.generic(prompt);
+// Helpers for Monaco language detection
+function getLanguageFromExt(filepath) {
+  if (!filepath) return 'plaintext';
+  var ext = filepath.split('.').pop().toLowerCase();
+  switch (ext) {
+    case 'js':
+    case 'jsx':
+      return 'javascript';
+    case 'ts':
+    case 'tsx':
+      return 'typescript';
+    case 'html':
+      return 'html';
+    case 'css':
+      return 'css';
+    case 'json':
+      return 'json';
+    case 'py':
+      return 'python';
+    case 'md':
+      return 'markdown';
+    default:
+      return 'plaintext';
+  }
 }
 
-// ── Simple syntax colorizer ─
-function colorize(code) {
-  if (!code) return '';
-  return code
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/("[^"]*")/g, '<span class="tok-str">$1</span>')
-    .replace(/\b(function|const|let|var|return|if|else|for|while|class|new)\b/g, '<span class="tok-kw">$1</span>')
-    .replace(/(\/\/.*)/g, '<span class="tok-cmt">$1</span>');
-}
+function NexusStudioApp() {
+  // Navigation & View State
+  var [activeView, setActiveView] = useState('explorer'); // explorer, search, git, experience, settings
+  var [bottomTab, setBottomTab] = useState('terminal'); // terminal, problems, output, agent_logs
+  var [showPreview, setShowPreview] = useState(true);
+  var [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  var [showSettingsModal, setShowSettingsModal] = useState(false);
 
-// ── Icons ─────────────────────────────────────────────────────
-function IcoArrow() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 12h14M12 5l7 7-7 7"/>
-    </svg>
-  );
-}
-function IcoRefresh() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
-      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>
-    </svg>
-  );
-}
-function IcoOpen() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-    </svg>
-  );
-}
-function IcoCopy() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
-    </svg>
-  );
-}
-function IcoDownload() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-      <polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>
-    </svg>
-  );
-}
-function IcoEdit() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
-    </svg>
-  );
-}
-function IcoCheck() {
-  return (
-    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12"/>
-    </svg>
-  );
-}
-function IcoShield() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-    </svg>
-  );
-}
+  // Project & Workspace State
+  var [activeProject, setActiveProject] = useState({ path: '', name: 'Loading...', recent: [] });
+  var [fileTree, setFileTree] = useState([]);
+  var [openTabs, setOpenTabs] = useState([]); // [{ path, name, dirty, content }]
+  var [activeTabPath, setActiveTabPath] = useState(null);
 
-// ─────────────────────────────────────────────────────────────
-// SCREEN 1 — PROMPT
-// ─────────────────────────────────────────────────────────────
-function PromptScreen({ onSubmit }) {
-  var ref = useRef(null);
-  var state = useState('');
-  var value = state[0];
-  var setValue = state[1];
+  // Agent State
+  var [agentPrompt, setAgentPrompt] = useState('');
+  var [agentRunning, setAgentRunning] = useState(false);
+  var [agentEvents, setAgentEvents] = useState([]);
+  var [currentPlan, setCurrentPlan] = useState('');
 
+  // Terminal State
+  var [terminalInput, setTerminalInput] = useState('');
+  var [terminalLogs, setTerminalLogs] = useState([]);
+
+  // Git State
+  var [gitStatus, setGitStatus] = useState({ is_repo: false, branch: '', changes: [] });
+  var [commitMsg, setCommitMsg] = useState('');
+
+  // Experiences
+  var [experiences, setExperiences] = useState([]);
+  var [expSearch, setExpSearch] = useState('');
+
+  // Search in Workspace
+  var [searchQuery, setSearchQuery] = useState('');
+  var [searchResults, setSearchResults] = useState([]);
+
+  // Settings State
+  var [settings, setSettings] = useState({
+    general: { theme: 'dark-nexus' },
+    ai: { provider_name: 'OpenRouter', base_url: 'https://openrouter.ai/api/v1', api_key: '', model: 'google/gemini-2.0-flash-exp:free' },
+    agent: { max_repair_attempts: 3, auto_run_commands: true }
+  });
+  var [testResult, setTestResult] = useState(null);
+
+  // Monaco Editor Reference
+  var editorContainerRef = useRef(null);
+  var monacoEditorInstance = useRef(null);
+  var previewIframeRef = useRef(null);
+
+  // -------------------------------------------------------------
+  // INITIALIZATION & WEBSOCKET
+  // -------------------------------------------------------------
   useEffect(function() {
-    if (ref.current) ref.current.focus();
+    loadActiveProject();
+    loadSettings();
+    loadGitStatus();
+    loadExperiences();
+
+    // WebSocket Stream
+    var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = protocol + '//' + window.location.host + '/ws/logs';
+    var socket = new WebSocket(wsUrl);
+
+    socket.onmessage = function(event) {
+      try {
+        var payload = JSON.parse(event.data);
+        handleWsEvent(payload);
+      } catch (e) {
+        console.error('WS Error parse:', e);
+      }
+    };
+
+    return function() {
+      socket.close();
+    };
   }, []);
 
-  function handleKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (value.trim()) onSubmit(value.trim());
+  function handleWsEvent(event) {
+    if (event.type === 'agent_started') {
+      setAgentRunning(true);
+      setAgentEvents(function(prev) { return prev.concat([{ type: 'start', text: event.text, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'agent_step') {
+      setAgentEvents(function(prev) { return prev.concat([{ type: 'step', text: event.text, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'plan_ready') {
+      setCurrentPlan(event.data.plan || event.text);
+      setAgentEvents(function(prev) { return prev.concat([{ type: 'plan', text: 'Plan Generated', data: event.data, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'file_written' || event.type === 'file_edited') {
+      loadWorkspaceTree();
+      refreshPreview();
+      setAgentEvents(function(prev) { return prev.concat([{ type: 'file', text: event.text, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'build_result') {
+      setAgentEvents(function(prev) { return prev.concat([{ type: 'build', text: event.text, passed: event.data.passed, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'agent_finished') {
+      setAgentRunning(false);
+      loadWorkspaceTree();
+      refreshPreview();
+      setAgentEvents(function(prev) { return prev.concat([{ type: 'done', text: event.text, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'terminal_output' || event.type === 'terminal_input') {
+      setTerminalLogs(function(prev) { return prev.concat([event.text]); });
     }
   }
 
-  return (
-    <div className="screen-prompt">
-      <div className="prompt-page-inner">
-        <div className="prompt-brand">
-          <div className="prompt-brand-mark">N</div>
-          <div className="prompt-brand-name">NexusAI</div>
-        </div>
-
-        <h1 className="prompt-headline">
-          What do you want<br />
-          <span>to build?</span>
-        </h1>
-
-        <div className="prompt-card">
-          <textarea
-            ref={ref}
-            id="main-prompt-input"
-            className="prompt-textarea"
-            placeholder="Describe anything — an app, dashboard, tool, game, form..."
-            value={value}
-            rows={5}
-            onChange={function(e) { setValue(e.target.value); }}
-            onKeyDown={handleKey}
-          />
-          <div className="prompt-card-footer">
-            <span className="prompt-hint">Enter to build &nbsp;·&nbsp; Shift+Enter for new line</span>
-            <button
-              id="prompt-submit-btn"
-              className="prompt-submit-btn"
-              disabled={!value.trim()}
-              onClick={function() { if (value.trim()) onSubmit(value.trim()); }}
-            >
-              <span>Build it</span>
-              <IcoArrow />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// ACTIVITY PANEL (shows steps + live agent reasoning feed)
-// ─────────────────────────────────────────────────────────────
-function ActivityPanel({ activeIdx, liveLogs }) {
-  var logsRef = useRef(null);
-  var tabState = useState('terminal'); // 'terminal' or 'steps'
-  var activeTab = tabState[0];
-  var setActiveTab = tabState[1];
-
+  // -------------------------------------------------------------
+  // MONACO EDITOR LIFECYCLE
+  // -------------------------------------------------------------
   useEffect(function() {
-    if (logsRef.current) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight;
-    }
-  }, [liveLogs, activeTab]);
+    if (window.require && editorContainerRef.current && !monacoEditorInstance.current) {
+      window.require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+      window.require(['vs/editor/editor.main'], function() {
+        monacoEditorInstance.current = window.monaco.editor.create(editorContainerRef.current, {
+          value: '// Welcome to NexusAI Studio IDE\n// Open a file from the explorer to start editing.',
+          language: 'javascript',
+          theme: 'vs-dark',
+          automaticLayout: true,
+          minimap: { enabled: true },
+          fontSize: 13,
+          fontFamily: "'JetBrains Mono', monospace",
+          lineNumbers: 'on',
+          scrollBeyondLastLine: false,
+        });
 
-  return (
-    <div className="panel panel-activity">
-      <div className="panel-header">
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <span className="panel-title">Console & Activity</span>
-        </div>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <button
-            className={'btn-ghost ' + (activeTab === 'terminal' ? 'active' : '')}
-            style={{ padding: '2px 8px', fontSize: '0.7rem', background: activeTab === 'terminal' ? 'var(--bg-2)' : 'transparent' }}
-            onClick={function() { setActiveTab('terminal'); }}
-          >
-            Console
-          </button>
-          <button
-            className={'btn-ghost ' + (activeTab === 'steps' ? 'active' : '')}
-            style={{ padding: '2px 8px', fontSize: '0.7rem', background: activeTab === 'steps' ? 'var(--bg-2)' : 'transparent' }}
-            onClick={function() { setActiveTab('steps'); }}
-          >
-            Steps
-          </button>
-        </div>
-      </div>
-
-      {activeTab === 'steps' ? (
-        <div className="activity-feed">
-          {STEPS.map(function(step, i) {
-            var state = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending';
-            return (
-              <div key={step.id} className={'activity-item ' + state}>
-                <div className={'activity-icon ' + (state === 'done' ? 'done-icon' : state === 'active' ? 'active-icon' : 'pending')}>
-                  {state === 'done'   ? <IcoCheck /> : null}
-                  {state === 'active' ? <div className="spin-ring" /> : null}
-                </div>
-                <span className="activity-label">{step.label}</span>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="activity-terminal" style={{ margin: 0, border: 'none', borderRadius: 0, height: '100%' }}>
-          <div className="activity-terminal-header">
-            <span>TERMINAL OUTPUT</span>
-            <span style={{ color: 'var(--green)' }}>● LIVE</span>
-          </div>
-          <div className="activity-terminal-body" ref={logsRef}>
-            {(!liveLogs || liveLogs.length === 0) ? (
-              <div style={{ color: 'var(--text-3)' }}>Waiting for build execution...</div>
-            ) : (
-              liveLogs.map(function(log, idx) {
-                var cls = 'terminal-line';
-                if (log.type === 'terminal_banner' || log.type === 'agent_started') cls += ' banner';
-                else if (log.type === 'build_success') cls += ' success';
-                else if (log.type === 'command_error') cls += ' fail';
-                else if (log.type === 'tool_call_start' || log.type === 'tool_call_end') cls += ' tool';
-                else if (log.type === 'command_running' || log.type === 'file_written') cls += ' cmd';
-                return (
-                  <div key={idx} className={cls}>
-                    {log.text || log.message}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// CODE PANEL
-// ─────────────────────────────────────────────────────────────
-function CodePanel({ files, activeFile, onSelect, onCopy, onDownload }) {
-  var fileNames = Object.keys(files || {});
-  var code   = (files && files[activeFile]) || '';
-  var lines  = code.split('\n');
-  var html   = colorize(code);
-
-  return (
-    <div className="panel panel-code">
-      <div className="panel-header">
-        <span className="panel-title">Code</span>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <button className="btn-icon" title="Copy" id="code-copy-btn" onClick={onCopy}><IcoCopy /></button>
-          <button className="btn-icon" title="Download" id="code-dl-btn" onClick={onDownload}><IcoDownload /></button>
-        </div>
-      </div>
-
-      <div className="file-tree">
-        <div className="file-tree-label">Files ({fileNames.length})</div>
-        {fileNames.map(function(f) {
-          return (
-            <div
-              key={f}
-              className={'file-item ' + (activeFile === f ? 'active' : '')}
-              onClick={function() { onSelect(f); }}
-            >
-              <div className="file-dot" />
-              {f}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="code-editor-area">
-        <div className="line-numbers">
-          {lines.map(function(_, i) { return <div key={i}>{i + 1}</div>; })}
-        </div>
-        <div
-          className="code-content"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// PREVIEW PANEL
-// ─────────────────────────────────────────────────────────────
-function PreviewPanel({ html, slug }) {
-  var iframeRef = useRef(null);
-
-  // When html changes we just reload the iframe by bumping the src timestamp.
-  // The server already serves sandbox_app/ at /sandbox/ so all relative
-  // imports (style.css, script.js) resolve correctly — no srcdoc needed.
-  useEffect(function() {
-    if (iframeRef.current && html) {
-      // Force reload by toggling src with a cache-buster
-      iframeRef.current.src = '/sandbox/index.html?t=' + Date.now();
-    }
-  }, [html]);
-
-
-  function refresh() {
-    if (!iframeRef.current || !html) return;
-    iframeRef.current.src = '/sandbox/index.html?t=' + Date.now();
-  }
-
-
-  function openTab() {
-    if (!html) return;
-    var blob = new Blob([html], { type: 'text/html' });
-    window.open(URL.createObjectURL(blob), '_blank');
-  }
-
-  return (
-    <div className="panel panel-preview">
-      <div className="panel-header">
-        <span className="panel-title">Live Preview</span>
-        <div className="preview-toolbar">
-          <div className="preview-url">
-            <IcoShield />
-            <span className="preview-url-text">
-              {html ? ('preview.nexus/' + (slug || 'app')) : 'waiting for build...'}
-            </span>
-          </div>
-          <button className="btn-icon" title="Refresh" id="preview-refresh-btn" onClick={refresh}><IcoRefresh /></button>
-          <button className="btn-icon" title="Open in tab" id="preview-open-btn" onClick={openTab}><IcoOpen /></button>
-        </div>
-      </div>
-
-      <div className={'preview-frame-container' + (!html ? ' dark-bg' : '')}>
-        {!html ? (
-          <div className="preview-placeholder">
-            <div className="preview-placeholder-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <rect width="18" height="18" x="3" y="3" rx="2"/>
-                <circle cx="9" cy="9" r="2"/>
-                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
-              </svg>
-            </div>
-            <p>Live preview will appear as soon as the agent builds the app</p>
-          </div>
-        ) : (
-          <iframe
-            ref={iframeRef}
-            id="preview-iframe"
-            className="preview-iframe"
-            title="Live Preview"
-            src="/sandbox/index.html"
-            sandbox="allow-scripts allow-modals allow-forms allow-same-origin"
-          />
-
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// WORKSPACE SCREEN
-// ─────────────────────────────────────────────────────────────
-function WorkspaceScreen({ prompt, onNewBuild }) {
-  var stepState    = useState(0);
-  var activeStep   = stepState[0];
-  var setActiveStep = stepState[1];
-
-  var statusState  = useState('building');
-  var buildStatus  = statusState[0];
-  var setBuildStatus = statusState[1];
-
-  var htmlState    = useState(null);
-  var previewHtml  = htmlState[0];
-  var setPreviewHtml = htmlState[1];
-
-  var filesState   = useState({ 'index.html': '' });
-  var files        = filesState[0];
-  var setFiles     = filesState[1];
-
-  var fileState    = useState('index.html');
-  var activeFile   = fileState[0];
-  var setActiveFile = fileState[1];
-
-  var editState    = useState(false);
-  var editOpen     = editState[0];
-  var setEditOpen  = editState[1];
-
-  var editValState = useState(prompt);
-  var editValue    = editValState[0];
-  var setEditValue = editValState[1];
-
-  var logsState    = useState([]);
-  var liveLogs     = logsState[0];
-  var setLiveLogs  = logsState[1];
-
-  // Panel sizes (percentages)
-  var sizesState   = useState({ left: 22, middle: 36 });
-  var sizes        = sizesState[0];
-  var setSizes     = sizesState[1];
-
-  var containerRef = useRef(null);
-  var dragging     = useRef(null);
-  var dragStartX   = useRef(0);
-  var dragStartSz  = useRef(null);
-
-  // Resize mouse events
-  useEffect(function() {
-    function onMove(e) {
-      if (!dragging.current || !containerRef.current) return;
-      var cw = containerRef.current.offsetWidth;
-      var dx = ((e.clientX - dragStartX.current) / cw) * 100;
-      setSizes(function(prev) {
-        var s = { left: prev.left, middle: prev.middle };
-        if (dragging.current === 'left') {
-          s.left = Math.max(14, Math.min(40, dragStartSz.current.left + dx));
-        } else {
-          s.middle = Math.max(18, Math.min(55, dragStartSz.current.middle + dx));
-        }
-        return s;
+        monacoEditorInstance.current.onDidChangeModelContent(function() {
+          var updated = monacoEditorInstance.current.getValue();
+          if (activeTabPath) {
+            setOpenTabs(function(tabs) {
+              return tabs.map(function(t) {
+                return t.path === activeTabPath ? Object.assign({}, t, { content: updated, dirty: true }) : t;
+              });
+            });
+          }
+        });
       });
     }
-    function onUp() {
-      dragging.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    return function() {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, []);
+  }, [activeTabPath]);
 
-  function startDrag(handle) {
-    return function(e) {
-      e.preventDefault();
-      dragging.current = handle;
-      dragStartX.current = e.clientX;
-      dragStartSz.current = { left: sizes.left, middle: sizes.middle };
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-    };
+  // Update Monaco content when switching tabs
+  useEffect(function() {
+    if (monacoEditorInstance.current && activeTabPath) {
+      var activeTab = openTabs.find(function(t) { return t.path === activeTabPath; });
+      if (activeTab) {
+        var currentVal = monacoEditorInstance.current.getValue();
+        if (currentVal !== activeTab.content) {
+          var lang = getLanguageFromExt(activeTab.path);
+          var model = window.monaco.editor.createModel(activeTab.content, lang);
+          monacoEditorInstance.current.setModel(model);
+        }
+      }
+    }
+  }, [activeTabPath, openTabs]);
+
+  // -------------------------------------------------------------
+  // API CALLS
+  // -------------------------------------------------------------
+  function loadActiveProject() {
+    fetch('/api/project/active')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        setActiveProject(data);
+        loadWorkspaceTree();
+      });
   }
 
-  // REAL AGENT EXECUTION & WEBSOCKET SYNC
-  useEffect(function() {
-    var cancelled = false;
-    var ws = null;
-    var timerInterval = null;
+  function loadWorkspaceTree() {
+    fetch('/api/workspace/tree')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        setFileTree(data);
+      });
+  }
 
-    // Connect WebSocket for live logs and real reasoning tracking
-    try {
-      var wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      var wsUrl = wsProtocol + '//' + window.location.host + '/ws/logs';
-      ws = new WebSocket(wsUrl);
+  function loadSettings() {
+    fetch('/api/settings')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { setSettings(data); });
+  }
 
-      ws.onmessage = function(event) {
-        if (cancelled) return;
-        try {
-          var data = JSON.parse(event.data);
-          setLiveLogs(function(prev) {
-            return prev.concat([data]).slice(-40);
-          });
+  function loadGitStatus() {
+    fetch('/api/git/status')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { setGitStatus(data); });
+  }
 
-          // Match AI agent's actual actions to the UI steps
-          if (data.type === 'agent_started') {
-            setActiveStep(0); // Understanding request
-          } else if (data.type === 'reasoning_step') {
-            setActiveStep(1); // Planning application structure
-          } else if (data.type === 'tool_call_start') {
-            if (data.data && data.data.tool === 'list_files') {
-              setActiveStep(2); // Creating project files
-            } else if (data.data && data.data.tool === 'write_file') {
-              var inputStr = data.data.input || '';
-              if (inputStr.indexOf('index.html') >= 0) {
-                setActiveStep(3); // Writing HTML structure
-              } else if (inputStr.indexOf('.css') >= 0) {
-                setActiveStep(4); // Applying styles & layout
-              } else if (inputStr.indexOf('.js') >= 0) {
-                setActiveStep(5); // Implementing interactions
-              }
-            } else if (data.data && data.data.tool === 'run_command') {
-              setActiveStep(6); // Running automated tests
-            }
-          } else if (data.type === 'file_written' && data.data) {
-            var fname = data.data.filename;
-            var content = data.data.content;
-            if (fname && content) {
-              setFiles(function(prev) {
-                var next = Object.assign({}, prev);
-                next[fname] = content;
-                return next;
-              });
-              if (fname === 'index.html') {
-                setActiveStep(7); // Verifying browser rendering
-              }
-            }
-          } else if (data.type === 'agent_finished') {
-            setActiveStep(STEPS.length); // Build complete
-            setBuildStatus('ready');
-          }
-        } catch (e) {
-          // ignore json parse error
-        }
-      };
-    } catch (e) {
-      console.warn('WebSocket setup warning:', e);
+  function loadExperiences() {
+    fetch('/api/experience/search?q=' + encodeURIComponent(expSearch))
+      .then(function(r) { return r.json(); })
+      .then(function(data) { setExperiences(data); });
+  }
+
+  function openFile(filePath) {
+    var existing = openTabs.find(function(t) { return t.path === filePath; });
+    if (existing) {
+      setActiveTabPath(filePath);
+      return;
     }
 
-    // Step pacing: In case the LLM takes time thinking without tool events,
-    // progress steps calmly and deliberately (4-6 seconds each) rather than flashing instantly
-    var currentPaceStep = 0;
-    timerInterval = setInterval(function() {
-      if (cancelled) return;
-      currentPaceStep++;
-      if (currentPaceStep <= 2) {
-        setActiveStep(function(prev) { return Math.max(prev, currentPaceStep); });
-      }
-    }, 4500);
+    fetch('/api/workspace/file?path=' + encodeURIComponent(filePath))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var newTab = { path: filePath, name: filePath.split('/').pop(), content: data.content, dirty: false };
+        setOpenTabs(function(tabs) { return tabs.concat([newTab]); });
+        setActiveTabPath(filePath);
+      });
+  }
 
-    // Call the actual AI Agent backend
+  function closeTab(e, path) {
+    e.stopPropagation();
+    var filtered = openTabs.filter(function(t) { return t.path !== path; });
+    setOpenTabs(filtered);
+    if (activeTabPath === path) {
+      setActiveTabPath(filtered.length > 0 ? filtered[filtered.length - 1].path : null);
+    }
+  }
+
+  function saveCurrentFile() {
+    var activeTab = openTabs.find(function(t) { return t.path === activeTabPath; });
+    if (!activeTab || !monacoEditorInstance.current) return;
+    var content = monacoEditorInstance.current.getValue();
+
+    fetch('/api/workspace/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: activeTab.path, content: content })
+    }).then(function() {
+      setOpenTabs(function(tabs) {
+        return tabs.map(function(t) {
+          return t.path === activeTab.path ? Object.assign({}, t, { dirty: false, content: content }) : t;
+        });
+      });
+      refreshPreview();
+    });
+  }
+
+  function runTerminalCmd(e) {
+    if (e.key === 'Enter' && terminalInput.trim()) {
+      var cmd = terminalInput.trim();
+      setTerminalInput('');
+      setTerminalLogs(function(p) { return p.concat(['$ ' + cmd]); });
+
+      fetch('/api/terminal/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd })
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var out = (data.stdout || '') + (data.stderr || '');
+        setTerminalLogs(function(p) { return p.concat([out || '(no output)']); });
+        loadWorkspaceTree();
+      });
+    }
+  }
+
+  function handleAgentSubmit() {
+    if (!agentPrompt.trim() || agentRunning) return;
+    var prompt = agentPrompt.trim();
+    setAgentPrompt('');
+    setAgentRunning(true);
+    setAgentEvents([]);
+
     fetch('/api/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: prompt })
-    }).then(function(res) {
-      if (!res.ok) throw new Error('Build failed');
-      return res.json();
-    }).then(function(data) {
-      if (cancelled) return;
-      clearInterval(timerInterval);
-
-      var htmlContent = data.html;
-      var fileDict = data.files || {};
-
-      if (!htmlContent && (!fileDict || Object.keys(fileDict).length === 0)) {
-        // Fallback if backend returned empty
-        htmlContent = pickTemplate(prompt);
-        fileDict = { 'index.html': htmlContent };
-      }
-
-      setFiles(fileDict);
-      var defaultFile = fileDict['index.html'] ? 'index.html' : Object.keys(fileDict)[0] || 'index.html';
-      setActiveFile(defaultFile);
-      setPreviewHtml(htmlContent || fileDict['index.html'] || '');
-      setActiveStep(STEPS.length);
-      setBuildStatus('ready');
-    }).catch(function(err) {
-      if (cancelled) return;
-      clearInterval(timerInterval);
-      console.warn('Backend build error, loading template fallback:', err);
-      var fallbackHtml = pickTemplate(prompt);
-      setFiles({ 'index.html': fallbackHtml });
-      setPreviewHtml(fallbackHtml);
-      setActiveStep(STEPS.length);
-      setBuildStatus('ready');
+      body: JSON.stringify({ prompt: prompt, auto_repair: true })
     });
-
-    return function() {
-      cancelled = true;
-      if (timerInterval) clearInterval(timerInterval);
-      if (ws) ws.close();
-    };
-  }, [prompt]);
-
-  // Slug from prompt
-  var slug = prompt.slice(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-
-  function copyCode() {
-    var code = files[activeFile] || '';
-    if (navigator.clipboard) navigator.clipboard.writeText(code).catch(function(){});
   }
 
-  function downloadCode() {
-    var code = files[activeFile] || '';
-    var blob = new Blob([code], { type: 'text/plain' });
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement('a');
-    a.href   = url;
-    a.download = activeFile;
-    a.click();
-    URL.revokeObjectURL(url);
+  function refreshPreview() {
+    if (previewIframeRef.current) {
+      previewIframeRef.current.src = '/sandbox/index.html?t=' + Date.now();
+    }
   }
 
-  function exportApp() {
-    if (!previewHtml) return;
-    var blob = new Blob([previewHtml], { type: 'text/html' });
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement('a');
-    a.href   = url;
-    a.download = slug + '.html';
-    a.click();
-    URL.revokeObjectURL(url);
+  function handleSearchWorkspace() {
+    if (!searchQuery.trim()) return;
+    fetch('/api/workspace/search?q=' + encodeURIComponent(searchQuery))
+      .then(function(r) { return r.json(); })
+      .then(function(results) { setSearchResults(results); });
   }
 
-  function submitEdit() {
-    var v = editValue.trim();
-    setEditOpen(false);
-    if (v && v !== prompt) onNewBuild(v);
+  function handleCommit() {
+    if (!commitMsg.trim()) return;
+    fetch('/api/git/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: commitMsg })
+    }).then(function() {
+      setCommitMsg('');
+      loadGitStatus();
+    });
   }
 
-  var statusLabel = buildStatus === 'building' ? 'Building...' : buildStatus === 'ready' ? 'Ready' : 'Error';
+  function testLLM() {
+    setTestResult({ loading: true });
+    fetch('/api/llm/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings.ai)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(res) { setTestResult(res); });
+  }
+
+  function saveSettingsConfig() {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    }).then(function() {
+      setShowSettingsModal(false);
+    });
+  }
+
+  // -------------------------------------------------------------
+  // RENDER HELPERS
+  // -------------------------------------------------------------
+  function renderTree(nodes) {
+    return nodes.map(function(node) {
+      if (node.isDir) {
+        return (
+          <div key={node.path} style={{ marginLeft: 8 }}>
+            <div className="tree-node">📁 {node.name}</div>
+            {node.children && renderTree(node.children)}
+          </div>
+        );
+      }
+      return (
+        <div
+          key={node.path}
+          className={"tree-node " + (activeTabPath === node.path ? "active-file" : "")}
+          onClick={function() { openFile(node.path); }}
+        >
+          📄 {node.name}
+        </div>
+      );
+    });
+  }
 
   return (
-    <div className="screen-workspace">
-
-      {/* ── HEADER ─────────────────────────────────────────── */}
-      <header className="ws-header">
-        <div className="ws-header-left">
-          <a
-            href="#"
-            className="ws-logo"
-            onClick={function(e) { e.preventDefault(); onNewBuild(null); }}
-          >
-            <div className="ws-logo-mark">N</div>
-            <span className="ws-logo-name">NexusAI</span>
-          </a>
-          <div className="ws-sep" />
-          <span className="ws-project-name">{slug}</span>
-          <div className={'ws-status ' + buildStatus}>
-            <div className="ws-status-dot" />
-            {statusLabel}
-          </div>
+    <div className="nexus-app">
+      {/* ── TOP BAR ── */}
+      <header className="nexus-topbar">
+        <div className="topbar-brand">
+          <div className="brand-icon">N</div>
+          <span>NexusAI Studio</span>
         </div>
-        <div className="ws-header-right">
-          <button className="btn-ghost" id="new-build-btn" onClick={function() { onNewBuild(null); }}>
-            New build
-          </button>
-          {previewHtml && (
-            <button className="btn-solid" id="export-btn" onClick={exportApp}>
-              <IcoDownload />
-              Export
-            </button>
-          )}
+
+        <div className="topbar-center">
+          <span>📁 {activeProject.name || 'No Project Open'}</span>
+          <button className="icon-btn-sm" onClick={function() { setShowNewProjectModal(true); }} title="New/Open Project">+</button>
+        </div>
+
+        <div className="topbar-right">
+          <div className="provider-pill">
+            <div className="pill-dot"></div>
+            <span>{settings.ai.provider_name} ({settings.ai.model.split('/').pop()})</span>
+          </div>
+          <button className="icon-btn-sm" onClick={function() { setShowPreview(!showPreview); }} title="Toggle Preview">👁️</button>
+          <button className="icon-btn-sm" onClick={saveCurrentFile} title="Save (Ctrl+S)">💾</button>
+          <button className="icon-btn-sm" onClick={function() { setShowSettingsModal(true); }} title="Settings">⚙️</button>
         </div>
       </header>
 
-      {/* ── REQUEST BAR ────────────────────────────────────── */}
-      <div className="ws-request-bar">
-        <p className="ws-request-text">
-          <strong>Build: </strong>{prompt}
-        </p>
-        <button className="btn-ghost" id="edit-request-btn" onClick={function() { setEditOpen(true); }} style={{ flexShrink: 0 }}>
-          <IcoEdit />
-          Edit
-        </button>
-      </div>
+      {/* ── MAIN WORKBENCH ── */}
+      <div className="nexus-workbench">
+        {/* Activity Bar */}
+        <aside className="activity-bar">
+          <button
+            className={"activity-btn " + (activeView === 'explorer' ? 'active' : '')}
+            onClick={function() { setActiveView('explorer'); }}
+            title="Explorer"
+          >
+            📁
+          </button>
+          <button
+            className={"activity-btn " + (activeView === 'search' ? 'active' : '')}
+            onClick={function() { setActiveView('search'); }}
+            title="Search Workspace"
+          >
+            🔍
+          </button>
+          <button
+            className={"activity-btn " + (activeView === 'git' ? 'active' : '')}
+            onClick={function() { setActiveView('git'); loadGitStatus(); }}
+            title="Source Control"
+          >
+            🌿
+          </button>
+          <button
+            className={"activity-btn " + (activeView === 'experience' ? 'active' : '')}
+            onClick={function() { setActiveView('experience'); loadExperiences(); }}
+            title="NexusAI Experience Network"
+          >
+            🌐
+          </button>
 
-      {/* ── THREE PANELS ───────────────────────────────────── */}
-      <div className="ws-body" ref={containerRef}>
+          <div className="activity-bottom">
+            <button className="activity-btn" onClick={function() { setShowSettingsModal(true); }} title="Settings">⚙️</button>
+          </div>
+        </aside>
 
-        {/* Left — Activity & Live Logs */}
-        <div style={{ width: sizes.left + '%', display: 'flex', overflow: 'hidden', flexShrink: 0 }}>
-          <ActivityPanel activeIdx={activeStep} liveLogs={liveLogs} />
+        {/* Sidebar Drawer */}
+        <div className="workbench-sidebar">
+          {activeView === 'explorer' && (
+            <React.Fragment>
+              <div className="sidebar-header">
+                <span>Explorer</span>
+                <div className="sidebar-actions">
+                  <button className="icon-btn-sm" onClick={loadWorkspaceTree} title="Refresh">🔄</button>
+                </div>
+              </div>
+              <div className="sidebar-content">
+                {renderTree(fileTree)}
+              </div>
+            </React.Fragment>
+          )}
+
+          {activeView === 'search' && (
+            <React.Fragment>
+              <div className="sidebar-header">Search Workspace</div>
+              <div className="sidebar-content">
+                <input
+                  className="form-control"
+                  placeholder="Find in files..."
+                  value={searchQuery}
+                  onChange={function(e) { setSearchQuery(e.target.value); }}
+                  onKeyDown={function(e) { if (e.key === 'Enter') handleSearchWorkspace(); }}
+                />
+                <div style={{ marginTop: 12 }}>
+                  {searchResults.map(function(res, idx) {
+                    return (
+                      <div key={idx} className="tree-node" onClick={function() { openFile(res.file); }}>
+                        <span style={{ color: 'var(--accent-cyan)' }}>{res.file}:{res.line}</span>
+                        <div style={{ fontSize: 11, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{res.content}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </React.Fragment>
+          )}
+
+          {activeView === 'git' && (
+            <React.Fragment>
+              <div className="sidebar-header">Source Control</div>
+              <div className="sidebar-content">
+                <div style={{ fontSize: 12, marginBottom: 8, color: 'var(--accent-cyan)' }}>
+                  Branch: {gitStatus.branch || 'main'}
+                </div>
+                <input
+                  className="form-control"
+                  placeholder="Commit message..."
+                  value={commitMsg}
+                  onChange={function(e) { setCommitMsg(e.target.value); }}
+                />
+                <button className="btn-primary" style={{ width: '100%', marginTop: 8 }} onClick={handleCommit}>
+                  Commit Changes
+                </button>
+                <div style={{ marginTop: 14, fontSize: 12, fontWeight: 600 }}>Changes:</div>
+                {gitStatus.changes && gitStatus.changes.map(function(c, i) {
+                  return (
+                    <div key={i} className="tree-node">
+                      <span style={{ color: 'var(--warning)', fontWeight: 'bold' }}>{c.status}</span>
+                      <span>{c.path}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </React.Fragment>
+          )}
+
+          {activeView === 'experience' && (
+            <React.Fragment>
+              <div className="sidebar-header">NexusAI Network</div>
+              <div className="sidebar-content">
+                <input
+                  className="form-control"
+                  placeholder="Search experiences..."
+                  value={expSearch}
+                  onChange={function(e) { setExpSearch(e.target.value); }}
+                  onKeyDown={function(e) { if (e.key === 'Enter') loadExperiences(); }}
+                />
+                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {experiences.map(function(exp) {
+                    return (
+                      <div key={exp.id} className="agent-card">
+                        <div className="agent-card-header">✓ {exp.title}</div>
+                        <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>{exp.problem}</p>
+                        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--accent-cyan)' }}>
+                          Solution: {exp.solution}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </React.Fragment>
+          )}
         </div>
 
-        {/* Drag handle 1 */}
-        <div
-          className="resize-handle"
-          id="resize-left"
-          onMouseDown={startDrag('left')}
-        />
+        {/* Center Main Editor + Split Preview */}
+        <div className="workbench-center">
+          {/* Editor Tabs */}
+          <div className="editor-tabs">
+            {openTabs.map(function(tab) {
+              return (
+                <div
+                  key={tab.path}
+                  className={"tab-item " + (activeTabPath === tab.path ? "active" : "")}
+                  onClick={function() { setActiveTabPath(tab.path); }}
+                >
+                  <span>{tab.name} {tab.dirty ? '•' : ''}</span>
+                  <span className="tab-close" onClick={function(e) { closeTab(e, tab.path); }}>×</span>
+                </div>
+              );
+            })}
+          </div>
 
-        {/* Middle — Code */}
-        <div style={{ width: sizes.middle + '%', display: 'flex', overflow: 'hidden', flexShrink: 0 }}>
-          <CodePanel
-            files={files}
-            activeFile={activeFile}
-            onSelect={setActiveFile}
-            onCopy={copyCode}
-            onDownload={downloadCode}
-          />
+          {/* Monaco & Live Preview Panes */}
+          <div className="editor-workspace-view">
+            <div ref={editorContainerRef} className="monaco-container"></div>
+
+            {showPreview && (
+              <div className="preview-split-pane">
+                <div className="preview-bar">
+                  <span>Live Preview (/sandbox/index.html)</span>
+                  <button className="icon-btn-sm" onClick={refreshPreview} title="Refresh">🔄</button>
+                </div>
+                <iframe ref={previewIframeRef} className="preview-iframe" src="/sandbox/index.html"></iframe>
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Panel (Terminal & Logs) */}
+          <div className="bottom-panel">
+            <div className="bottom-panel-tabs">
+              <span className={"bottom-tab " + (bottomTab === 'terminal' ? 'active' : '')} onClick={function() { setBottomTab('terminal'); }}>Integrated Terminal</span>
+              <span className={"bottom-tab " + (bottomTab === 'agent_logs' ? 'active' : '')} onClick={function() { setBottomTab('agent_logs'); }}>Agent Output</span>
+            </div>
+            <div className="bottom-panel-content">
+              {bottomTab === 'terminal' && (
+                <div>
+                  {terminalLogs.map(function(log, idx) {
+                    return <div key={idx}>{log}</div>;
+                  })}
+                  <div style={{ display: 'flex', alignItems: 'center', marginTop: 6 }}>
+                    <span style={{ color: 'var(--accent-cyan)', marginRight: 6 }}>$</span>
+                    <input
+                      style={{ background: 'transparent', border: 'none', color: '#fff', outline: 'none', flex: 1, fontFamily: 'var(--font-mono)' }}
+                      value={terminalInput}
+                      onChange={function(e) { setTerminalInput(e.target.value); }}
+                      onKeyDown={runTerminalCmd}
+                      placeholder="Type command and press Enter..."
+                    />
+                  </div>
+                </div>
+              )}
+              {bottomTab === 'agent_logs' && (
+                <div>
+                  {agentEvents.map(function(ev, idx) {
+                    return <div key={idx}>[{ev.time}] {ev.text}</div>;
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Drag handle 2 */}
-        <div
-          className="resize-handle"
-          id="resize-right"
-          onMouseDown={startDrag('right')}
-        />
+        {/* AI Agent Right Panel */}
+        <aside className="workbench-agent-panel">
+          <div className="agent-panel-header">
+            <span>NexusAI Autonomous Agent</span>
+            {agentRunning && <span style={{ color: 'var(--warning)', fontSize: 11 }}>● Executing</span>}
+          </div>
 
-        {/* Right — Preview */}
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minWidth: '220px' }}>
-          <PreviewPanel html={previewHtml} slug={slug} />
-        </div>
-      </div>
+          <div className="agent-timeline">
+            {currentPlan && (
+              <div className="agent-card">
+                <div className="agent-card-header">📋 Implementation Plan</div>
+                <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--text-muted)', fontSize: 11 }}>{currentPlan}</pre>
+              </div>
+            )}
 
-      {/* ── EDIT MODAL ─────────────────────────────────────── */}
-      {editOpen && (
-        <div className="edit-request-modal" onClick={function() { setEditOpen(false); }}>
-          <div className="edit-request-dialog" onClick={function(e) { e.stopPropagation(); }}>
-            <h3>Edit your request</h3>
+            {agentEvents.map(function(ev, idx) {
+              return (
+                <div key={idx} className="agent-card">
+                  <div className="agent-card-header">
+                    {ev.type === 'file' && '📄 '}
+                    {ev.type === 'step' && '⚡ '}
+                    {ev.type === 'build' && (ev.passed ? '✓ ' : '✗ ')}
+                    {ev.type === 'done' && '🎉 '}
+                    {ev.text}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>{ev.time}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="agent-prompt-box">
             <textarea
-              id="edit-request-textarea"
-              className="edit-request-textarea"
-              value={editValue}
-              autoFocus
-              rows={4}
-              onChange={function(e) { setEditValue(e.target.value); }}
-              onKeyDown={function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitEdit(); }
-                if (e.key === 'Escape') setEditOpen(false);
-              }}
-            />
-            <div className="edit-request-actions">
-              <button className="btn-ghost" onClick={function() { setEditOpen(false); }}>Cancel</button>
-              <button className="btn-solid" id="edit-submit-btn" onClick={submitEdit}>Rebuild</button>
+              className="agent-input"
+              rows={3}
+              placeholder="Ask NexusAI agent to build features, fix bugs, or run tests..."
+              value={agentPrompt}
+              onChange={function(e) { setAgentPrompt(e.target.value); }}
+              onKeyDown={function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAgentSubmit(); } }}
+            ></textarea>
+            <button className="agent-btn-submit" onClick={handleAgentSubmit} disabled={agentRunning}>
+              {agentRunning ? 'Building Application...' : 'Run Autonomous Agent'}
+            </button>
+          </div>
+        </aside>
+      </div>
+
+      {/* ── SETTINGS MODAL ── */}
+      {showSettingsModal && (
+        <div className="modal-overlay" onClick={function() { setShowSettingsModal(false); }}>
+          <div className="modal-card" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="modal-header">
+              <span>Settings & LLM Configuration</span>
+              <button className="tab-close" onClick={function() { setShowSettingsModal(false); }}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>AI Provider Runtime</label>
+                <select
+                  className="form-control"
+                  value={settings.ai.provider_name}
+                  onChange={function(e) {
+                    var val = e.target.value;
+                    var base = val === 'OpenRouter' ? 'https://openrouter.ai/api/v1' : (val === 'Ollama' ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1');
+                    setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { provider_name: val, base_url: base }) }));
+                  }}
+                >
+                  <option value="OpenRouter">OpenRouter (Cloud API)</option>
+                  <option value="OpenAI">OpenAI Compatible (Cloud)</option>
+                  <option value="Ollama">Ollama (Local LLM)</option>
+                  <option value="LMStudio">LM Studio (Local LLM)</option>
+                  <option value="Custom">Custom Endpoint</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Base URL Endpoint</label>
+                <input
+                  className="form-control"
+                  value={settings.ai.base_url}
+                  onChange={function(e) {
+                    var v = e.target.value;
+                    setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { base_url: v }) }));
+                  }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>API Key (Cloud only - stored securely)</label>
+                <input
+                  type="password"
+                  className="form-control"
+                  placeholder="sk-..."
+                  value={settings.ai.api_key || ''}
+                  onChange={function(e) {
+                    var k = e.target.value;
+                    setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { api_key: k }) }));
+                  }}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Model Name</label>
+                <input
+                  className="form-control"
+                  value={settings.ai.model}
+                  onChange={function(e) {
+                    var m = e.target.value;
+                    setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { model: m }) }));
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+                <button className="btn-secondary" onClick={testLLM}>Test Connection</button>
+                <button className="btn-primary" onClick={saveSettingsConfig}>Save Settings</button>
+              </div>
+
+              {testResult && (
+                <div style={{ marginTop: 10, padding: 10, borderRadius: 6, background: testResult.success ? '#064e3b' : '#7f1d1d', color: '#fff', fontSize: 12 }}>
+                  {testResult.loading ? 'Testing endpoint...' : (testResult.success ? '✓ ' + testResult.message : '✗ ' + testResult.message + ' (' + testResult.hint + ')')}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── PROJECT CREATION MODAL ── */}
+      {showNewProjectModal && (
+        <div className="modal-overlay" onClick={function() { setShowNewProjectModal(false); }}>
+          <div className="modal-card" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="modal-header">
+              <span>Create / Open Project</span>
+              <button className="tab-close" onClick={function() { setShowNewProjectModal(false); }}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Project Name</label>
+                <input id="new-proj-name" className="form-control" placeholder="my-awesome-app" defaultValue="nexus-app" />
+              </div>
+              <div className="form-group">
+                <label>Template</label>
+                <select id="new-proj-template" className="form-control" defaultValue="vanilla">
+                  <option value="vanilla">Vanilla HTML/CSS/JS</option>
+                  <option value="react">React + Vite</option>
+                  <option value="python">Python FastAPI Backend</option>
+                  <option value="node">Node.js</option>
+                  <option value="empty">Empty Project</option>
+                </select>
+              </div>
+              <button
+                className="btn-primary"
+                onClick={function() {
+                  var name = document.getElementById('new-proj-name').value;
+                  var template = document.getElementById('new-proj-template').value;
+                  fetch('/api/project/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, template: template })
+                  })
+                  .then(function(r) { return r.json(); })
+                  .then(function(d) {
+                    setActiveProject(d);
+                    setShowNewProjectModal(false);
+                    loadWorkspaceTree();
+                    refreshPreview();
+                  });
+                }}
+              >
+                Create & Open Project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── FIRST-RUN ONBOARDING WIZARD ── */}
+      {!settings.ai.api_key && settings.ai.provider_name === 'OpenRouter' && !localStorage.getItem('nexus_onboarded') && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <div className="modal-header">
+              <span>🚀 Welcome to NexusAI Studio</span>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                Your autonomous AI developer environment. Choose how you want to run your model to begin:
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
+                <div
+                  className="agent-card"
+                  style={{ cursor: 'pointer', border: settings.ai.provider_type === 'cloud' ? '1px solid var(--accent-cyan)' : '1px solid var(--border-color)' }}
+                  onClick={function() {
+                    setSettings(Object.assign({}, settings, {
+                      ai: Object.assign({}, settings.ai, {
+                        provider_type: 'cloud',
+                        provider_name: 'OpenRouter',
+                        base_url: 'https://openrouter.ai/api/v1'
+                      })
+                    }));
+                  }}
+                >
+                  <div className="agent-card-header">☁️ Cloud API</div>
+                  <p style={{ fontSize: 11, color: 'var(--text-dim)' }}>OpenRouter, DeepSeek, Anthropic, Custom endpoints</p>
+                </div>
+                <div
+                  className="agent-card"
+                  style={{ cursor: 'pointer', border: settings.ai.provider_type === 'local' ? '1px solid var(--accent-cyan)' : '1px solid var(--border-color)' }}
+                  onClick={function() {
+                    setSettings(Object.assign({}, settings, {
+                      ai: Object.assign({}, settings.ai, {
+                        provider_type: 'local',
+                        provider_name: 'Ollama',
+                        base_url: 'http://localhost:11434/v1',
+                        model: 'qwen2.5-coder:latest'
+                      })
+                    }));
+                  }}
+                >
+                  <div className="agent-card-header">💻 Local LLM</div>
+                  <p style={{ fontSize: 11, color: 'var(--text-dim)' }}>Ollama, LM Studio, vLLM (Private & Offline)</p>
+                </div>
+              </div>
+
+              <div className="form-group" style={{ marginTop: 8 }}>
+                <label>API Endpoint / Base URL</label>
+                <input
+                  className="form-control"
+                  value={settings.ai.base_url}
+                  onChange={function(e) {
+                    var v = e.target.value;
+                    setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { base_url: v }) }));
+                  }}
+                />
+              </div>
+
+              {settings.ai.provider_type === 'cloud' && (
+                <div className="form-group">
+                  <label>API Key</label>
+                  <input
+                    type="password"
+                    className="form-control"
+                    placeholder="Enter API key..."
+                    value={settings.ai.api_key || ''}
+                    onChange={function(e) {
+                      var k = e.target.value;
+                      setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { api_key: k }) }));
+                    }}
+                  />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Model</label>
+                <input
+                  className="form-control"
+                  value={settings.ai.model}
+                  onChange={function(e) {
+                    var m = e.target.value;
+                    setSettings(Object.assign({}, settings, { ai: Object.assign({}, settings.ai, { model: m }) }));
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                <button className="btn-secondary" onClick={testLLM}>Test Connection</button>
+                <button
+                  className="btn-primary"
+                  onClick={function() {
+                    saveSettingsConfig();
+                    localStorage.setItem('nexus_onboarded', 'true');
+                  }}
+                >
+                  Get Started & Enter Studio
+                </button>
+              </div>
+
+              {testResult && (
+                <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: testResult.success ? '#064e3b' : '#7f1d1d', color: '#fff', fontSize: 11 }}>
+                  {testResult.loading ? 'Testing...' : (testResult.success ? '✓ ' + testResult.message : '✗ ' + testResult.message)}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -727,43 +889,4 @@ function WorkspaceScreen({ prompt, onNewBuild }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// ROOT
-// ─────────────────────────────────────────────────────────────
-function App() {
-  var screenState = useState('prompt');
-  var screen      = screenState[0];
-  var setScreen   = screenState[1];
-
-  var promptState = useState('');
-  var prompt      = promptState[0];
-  var setPrompt   = promptState[1];
-
-  var keyState    = useState(0);
-  var buildKey    = keyState[0];
-  var setBuildKey = keyState[1];
-
-  function handleSubmit(p) {
-    setPrompt(p);
-    setScreen('workspace');
-    setBuildKey(function(k) { return k + 1; });
-  }
-
-  function handleNewBuild(p) {
-    if (p) {
-      setPrompt(p);
-      setBuildKey(function(k) { return k + 1; });
-    } else {
-      setScreen('prompt');
-      setPrompt('');
-    }
-  }
-
-  if (screen === 'workspace' && prompt) {
-    return <WorkspaceScreen key={buildKey} prompt={prompt} onNewBuild={handleNewBuild} />;
-  }
-
-  return <PromptScreen onSubmit={handleSubmit} />;
-}
-
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(<NexusStudioApp />);
