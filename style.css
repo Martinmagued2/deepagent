@@ -759,6 +759,72 @@ body.nexus-ide-body {
   font-family: var(--font-mono);
 }
 
+/* ============================================================
+   CHAT BUBBLES
+   ============================================================ */
+.chat-bubble {
+  max-width: 90%;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  animation: chat-slide-in 160ms ease;
+}
+
+@keyframes chat-slide-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.user-bubble {
+  align-self: flex-end;
+  background: var(--accent);
+  color: white;
+  margin-left: auto;
+}
+
+.assistant-bubble {
+  align-self: flex-start;
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+
+.chat-bubble-header {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-bubble-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-text {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: inherit;
+}
+
+.agent-events-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-color);
+}
+
 .agent-card-meta {
   margin-top: 4px;
   display: flex;

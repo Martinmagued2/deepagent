@@ -41,7 +41,7 @@ from deep_agent.nexus_git import (
     is_repo,
     init_repo,
 )
-from deep_agent.nexus_graph import create_nexus_graph
+from deep_agent.nexus_graph import create_nexus_graph, run_chat_turn, clear_chat_agent, get_or_create_chat_agent
 
 from contextlib import asynccontextmanager
 
@@ -647,6 +647,92 @@ async def run_agent_build(req: AgentBuildRequest):
         "result": result,
         "workspace": active_path,
     }
+
+
+# ------------------------------------------------------------
+# API: CONVERSATIONAL CHAT (with memory)
+# ------------------------------------------------------------
+class ChatRequest(BaseModel):
+    message: str
+
+
+# Server-side chat history (per project). The agent also has its own
+# MemorySaver checkpointer, but we store the high-level message list here
+# so the frontend can restore it on refresh.
+_chat_history: Dict[str, List[Dict[str, Any]]] = {}
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    """Send a message to the conversational agent. The agent remembers
+    the full conversation history (via MemorySaver checkpointer keyed
+    by project path). Streams events via WebSocket.
+    """
+    settings = load_settings()
+    active_path = workspace_mgr.active_project_path
+
+    # Pre-flight: check API key for cloud providers
+    is_local = settings.ai.provider_type == "local" or settings.ai.provider_name.lower() in ("ollama", "lmstudio", "vllm")
+    if not is_local:
+        api_key = settings.ai.api_key or load_api_key() or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            err_msg = "No API key configured. Go to Settings → AI Provider, enter your API key, and click Save."
+            broadcast_event("agent_started", "Chat blocked: missing API key.", {"project": active_path})
+            broadcast_event("agent_error", err_msg, {
+                "error": "missing_api_key",
+                "hint": "Open Settings (Ctrl+,) → AI Provider → enter your API key → Save.",
+            })
+            broadcast_event("agent_finished", "Agent stopped: missing API key.", {"success": False})
+            return {"success": False, "error": "missing_api_key", "message": err_msg}
+
+    # Store the user message in server-side history
+    if active_path not in _chat_history:
+        _chat_history[active_path] = []
+    user_msg = {"role": "user", "content": req.message, "timestamp": time.time()}
+    _chat_history[active_path].append(user_msg)
+
+    banner = f"User: {req.message}"
+    broadcast_event("agent_started", banner, {"prompt": req.message, "project": active_path, "mode": "chat"})
+
+    # Wire approval if require_approval is set
+    approval_cb = approval_callback if settings.agent.get("require_approval", True) else None
+
+    # Run the conversational turn (streams via event_emitter → WebSocket)
+    response_text = await run_chat_turn(
+        project_path=active_path,
+        message=req.message,
+        provider_config=settings.ai,
+        event_emitter=broadcast_event,
+        approval_callback=approval_cb,
+    )
+
+    # Store the assistant response in server-side history
+    assistant_msg = {"role": "assistant", "content": response_text, "timestamp": time.time()}
+    _chat_history[active_path].append(assistant_msg)
+
+    broadcast_event("agent_finished", "Response complete.", {"success": True, "mode": "chat"})
+
+    return {
+        "success": True,
+        "response": response_text,
+        "history": _chat_history[active_path],
+    }
+
+
+@app.get("/api/chat/history")
+async def get_chat_history():
+    """Return the server-side chat history for the active project."""
+    active_path = workspace_mgr.active_project_path
+    return {"messages": _chat_history.get(active_path, []), "project": active_path}
+
+
+@app.delete("/api/chat/history")
+async def clear_chat_history():
+    """Clear the chat history and agent memory for the active project."""
+    active_path = workspace_mgr.active_project_path
+    _chat_history.pop(active_path, None)
+    clear_chat_agent(active_path)
+    return {"status": "cleared"}
 
 
 # ------------------------------------------------------------

@@ -408,3 +408,182 @@ INSTRUCTIONS:
     builder.add_edge("complete", END)
 
     return builder.compile()
+
+
+# ============================================================
+# CONVERSATIONAL CHAT AGENT (with memory)
+# ============================================================
+from langgraph.checkpoint.memory import MemorySaver
+
+# Per-project chat agents with memory
+_chat_agents: Dict[str, Any] = {}
+
+
+def get_or_create_chat_agent(
+    project_path: str,
+    provider_config: Optional[ProviderConfig] = None,
+    event_emitter: Optional[Callable[[str, str, dict], None]] = None,
+    approval_callback: Optional[Callable[[str, str, dict], bool]] = None,
+):
+    """Get (or create) a conversational chat agent for a project.
+    The agent uses a MemorySaver checkpointer keyed by project_path,
+    so it remembers the full conversation history across calls.
+    """
+    if project_path in _chat_agents:
+        return _chat_agents[project_path]
+
+    settings = load_settings()
+    model = get_chat_model(provider_config or settings.ai)
+    tools = build_agent_tools(project_path, event_emitter, approval_callback)
+
+    system_prompt = f"""You are NexusAI, an autonomous senior software engineer working inside a desktop IDE.
+
+Your workspace is: {project_path}
+
+You have access to tools for reading, writing, and editing files, running terminal commands,
+installing dependencies, running builds and tests, and searching the codebase.
+
+You remember the full conversation history — the user can ask follow-up questions
+and you can reference what you did previously.
+
+WORKFLOW:
+1. When the user asks you to build something, inspect the workspace first with list_directory().
+2. Read any relevant existing files with read_file().
+3. Create or modify files using write_file() and edit_file().
+4. For npm projects, create package.json and call install_dependency() for packages.
+5. Run the build with run_build() to verify.
+6. If the build fails, read the error, fix the issue, and rebuild.
+
+IMPORTANT RULES:
+- Actually CREATE files using write_file(). Do not just describe what to do.
+- Make sure all code is complete and functional — no placeholders or TODOs.
+- If a command fails, read the error output and fix the root cause.
+- Think step by step before each action.
+- When the user asks a question about the codebase, use read_file() and list_directory()
+  to inspect the code before answering.
+- Reference previous work when relevant ("I already created index.html, so now I'll...").
+"""
+
+    checkpointer = MemorySaver()
+
+    agent = create_deep_agent(
+        model=model,
+        tools=tools,
+        system_prompt=system_prompt,
+        checkpointer=checkpointer,
+    )
+
+    _chat_agents[project_path] = agent
+    return agent
+
+
+def clear_chat_agent(project_path: str):
+    """Clear the chat agent (and its memory) for a project."""
+    _chat_agents.pop(project_path, None)
+
+
+async def run_chat_turn(
+    project_path: str,
+    message: str,
+    provider_config: Optional[ProviderConfig] = None,
+    event_emitter: Optional[Callable[[str, str, dict], None]] = None,
+    approval_callback: Optional[Callable[[str, str, dict], bool]] = None,
+    thread_id: Optional[str] = None,
+) -> str:
+    """Run one conversational turn. Streams events via event_emitter.
+    The agent remembers all previous turns (via MemorySaver checkpointer).
+    Returns the full assistant response text.
+    """
+    import asyncio
+
+    agent = get_or_create_chat_agent(project_path, provider_config, event_emitter, approval_callback)
+    tid = thread_id or project_path
+
+    config = {"configurable": {"thread_id": tid}}
+
+    full_response = ""
+
+    def emit(event_type: str, text: str, data: dict = None):
+        if event_emitter:
+            event_emitter(event_type, text, data or {})
+
+    emit("agent_reasoning", "Thinking about your request...", {})
+
+    try:
+        async for event in agent.astream_events(
+            {"messages": [{"role": "user", "content": message}]},
+            config=config,
+            version="v2",
+        ):
+            evt_type = event.get("event", "")
+            evt_name = event.get("name", "")
+            evt_data = event.get("data", {})
+
+            # LLM token streaming — accumulate the response
+            if evt_type == "on_chat_model_stream":
+                chunk = evt_data.get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    full_response += chunk.content
+                    emit("agent_token", chunk.content, {})
+
+            # Tool start
+            elif evt_type == "on_tool_start":
+                tool_input = evt_data.get("input", {})
+                if isinstance(tool_input, dict):
+                    if evt_name == "write_file":
+                        fname = tool_input.get("filename", "?")
+                        emit("file_creating", f"Writing {fname}...", {"filename": fname})
+                        emit("agent_reasoning", f"Creating file: {fname}", {})
+                    elif evt_name == "edit_file":
+                        fname = tool_input.get("filename", "?")
+                        emit("file_editing", f"Editing {fname}...", {"filename": fname})
+                        emit("agent_reasoning", f"Editing file: {fname}", {})
+                    elif evt_name == "read_file":
+                        fname = tool_input.get("filename", "?")
+                        emit("agent_reasoning", f"Reading file: {fname}", {})
+                    elif evt_name == "run_terminal":
+                        cmd = tool_input.get("command", "?")
+                        emit("command_running", f"$ {cmd}", {"command": cmd, "cwd": project_path})
+                        emit("agent_reasoning", f"Running: {cmd}", {})
+                    elif evt_name == "install_dependency":
+                        pkg = tool_input.get("package", "?")
+                        emit("installing", f"Installing {pkg}...", {"package": pkg})
+                        emit("agent_reasoning", f"Installing {pkg}", {})
+                    elif evt_name == "list_directory":
+                        emit("agent_reasoning", "Listing workspace files...", {})
+                    elif evt_name == "run_build":
+                        emit("building", "Running build...", {})
+                        emit("agent_reasoning", "Running build to verify...", {})
+                    elif evt_name == "run_tests":
+                        emit("testing", "Running tests...", {})
+                        emit("agent_reasoning", "Running test suite...", {})
+                    elif evt_name == "search_files":
+                        q = tool_input.get("query", "?")
+                        emit("agent_reasoning", f"Searching for: {q}", {})
+                    else:
+                        emit("agent_reasoning", f"Calling tool: {evt_name}", {})
+
+            # Tool end
+            elif evt_type == "on_tool_end":
+                output = evt_data.get("output", "")
+                output_str = str(output)[:300] if output else ""
+                if evt_name in ("read_file", "list_directory", "search_files"):
+                    emit("agent_reasoning", f"Result: {output_str[:200]}", {})
+                elif evt_name == "run_terminal":
+                    emit("agent_reasoning", f"Command finished: {output_str[:200]}", {})
+
+            # Error events
+            elif "error" in evt_type.lower():
+                err_msg = str(evt_data)[:500]
+                emit("agent_error", f"Agent error: {err_msg}", {"error": err_msg})
+
+    except Exception as e:
+        import traceback
+        err_detail = traceback.format_exc()[-800:]
+        emit("agent_error", f"Chat failed: {e}", {"error": str(e), "traceback": err_detail})
+        if not full_response:
+            full_response = f"I encountered an error: {e}"
+
+    emit("agent_response_complete", full_response, {"response": full_response})
+    return full_response
+

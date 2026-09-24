@@ -93,6 +93,10 @@ function NexusStudioApp() {
   var [analysisText, setAnalysisText] = useState('');
   var [reasoningText, setReasoningText] = useState('');
 
+  // Chat (with history + memory)
+  var [chatMessages, setChatMessages] = useState([]);
+  var [streamingResponse, setStreamingResponse] = useState('');
+
   // Terminal
   var [terminalInput, setTerminalInput] = useState('');
   var [terminalLogs, setTerminalLogs] = useState([]);
@@ -139,6 +143,133 @@ function NexusStudioApp() {
   // ============================================================
   // INITIALIZATION & WEBSOCKET
   // ============================================================
+
+  // localStorage helpers — keyed by project path so each project has its own state
+  function lsKey(suffix) {
+    var p = activeProject.path || 'default';
+    return 'nexus_' + suffix + '_' + p.replace(/[^a-zA-Z0-9]/g, '_');
+  }
+  function lsLoad(suffix, fallback) {
+    try {
+      var v = localStorage.getItem(lsKey(suffix));
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) { return fallback; }
+  }
+  function lsSave(suffix, value) {
+    try {
+      localStorage.setItem(lsKey(suffix), JSON.stringify(value));
+    } catch (e) { /* quota or serialization error — ignore */ }
+  }
+
+  // Restore persisted UI state on mount
+  useEffect(function() {
+    // Load UI state (not project-specific)
+    var uiState = {};
+    try { uiState = JSON.parse(localStorage.getItem('nexus_ui_state') || '{}'); } catch (e) {}
+    if (uiState.sidebarWidth) setSidebarWidth(uiState.sidebarWidth);
+    if (uiState.agentPanelWidth) setAgentPanelWidth(uiState.agentPanelWidth);
+    if (uiState.bottomPanelHeight) setBottomPanelHeight(uiState.bottomPanelHeight);
+    if (uiState.previewWidth) setPreviewWidth(uiState.previewWidth);
+    if (uiState.showAgentPanel !== undefined) setShowAgentPanel(uiState.showAgentPanel);
+    if (uiState.showBottomPanel !== undefined) setShowBottomPanel(uiState.showBottomPanel);
+    if (uiState.showSidebar !== undefined) setShowSidebar(uiState.showSidebar);
+    if (uiState.showPreview !== undefined) setShowPreview(uiState.showPreview);
+    if (uiState.activeView) setActiveView(uiState.activeView);
+    if (uiState.bottomTab) setBottomTab(uiState.bottomTab);
+
+    // Load open tabs (paths only — content is re-fetched from server)
+    var savedTabs = [];
+    var savedActiveTab = null;
+    try {
+      savedTabs = JSON.parse(localStorage.getItem('nexus_open_tabs') || '[]');
+      savedActiveTab = localStorage.getItem('nexus_active_tab') || null;
+    } catch (e) {}
+    if (savedTabs.length > 0) {
+      // Re-open each tab by fetching its content from the server
+      savedTabs.forEach(function(tabPath) {
+        fetch('/api/workspace/file?path=' + encodeURIComponent(tabPath))
+          .then(function(r) { if (r.ok) return r.json(); throw new Error('not found'); })
+          .then(function(data) {
+            setOpenTabs(function(tabs) {
+              return tabs.concat([{ path: tabPath, name: tabPath.split('/').pop(), content: data.content, dirty: false }]);
+            });
+          })
+          .catch(function() { /* file may have been deleted — skip */ });
+      });
+      if (savedActiveTab) setActiveTabPath(savedActiveTab);
+    }
+  }, []);
+
+  // Persist UI state whenever it changes
+  useEffect(function() {
+    lsSave('ui_state', {
+      sidebarWidth: sidebarWidth,
+      agentPanelWidth: agentPanelWidth,
+      bottomPanelHeight: bottomPanelHeight,
+      previewWidth: previewWidth,
+      showAgentPanel: showAgentPanel,
+      showBottomPanel: showBottomPanel,
+      showSidebar: showSidebar,
+      showPreview: showPreview,
+      activeView: activeView,
+      bottomTab: bottomTab,
+    });
+    // Also save non-project-specific UI state (for initial load before project is known)
+    try {
+      localStorage.setItem('nexus_ui_state', JSON.stringify({
+        sidebarWidth: sidebarWidth,
+        agentPanelWidth: agentPanelWidth,
+        bottomPanelHeight: bottomPanelHeight,
+        previewWidth: previewWidth,
+        showAgentPanel: showAgentPanel,
+        showBottomPanel: showBottomPanel,
+        showSidebar: showSidebar,
+        showPreview: showPreview,
+        activeView: activeView,
+        bottomTab: bottomTab,
+      }));
+    } catch (e) {}
+  }, [sidebarWidth, agentPanelWidth, bottomPanelHeight, previewWidth, showAgentPanel, showBottomPanel, showSidebar, showPreview, activeView, bottomTab]);
+
+  // Persist open tabs whenever they change
+  useEffect(function() {
+    try {
+      var tabPaths = openTabs.map(function(t) { return t.path; });
+      localStorage.setItem('nexus_open_tabs', JSON.stringify(tabPaths));
+      if (activeTabPath) {
+        localStorage.setItem('nexus_active_tab', activeTabPath);
+      } else {
+        localStorage.removeItem('nexus_active_tab');
+      }
+    } catch (e) {}
+  }, [openTabs, activeTabPath]);
+
+  // Persist chat messages whenever they change
+  useEffect(function() {
+    if (activeProject.path) {
+      lsSave('chat_messages', chatMessages);
+    }
+  }, [chatMessages, activeProject.path]);
+
+  // Restore chat messages when the active project changes
+  useEffect(function() {
+    if (activeProject.path) {
+      var saved = lsLoad('chat_messages', []);
+      setChatMessages(saved);
+      // Also try to fetch from server (in case localStorage was cleared)
+      fetch('/api/chat/history')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.messages && data.messages.length > 0) {
+            setChatMessages(data.messages.map(function(m) {
+              return { role: m.role, content: m.content, timestamp: m.timestamp };
+            }));
+          }
+        })
+        .catch(function() {});
+    }
+  }, [activeProject.path]);
+
   useEffect(function() {
     loadActiveProject();
     loadSettings();
@@ -280,10 +411,29 @@ function NexusStudioApp() {
   function handleWsEvent(event) {
     if (event.type === 'agent_started') {
       setAgentRunning(true);
-      setAgentEvents([{ type: 'start', text: event.text, time: new Date().toLocaleTimeString() }]);
+      // Don't clear events in chat mode — keep history visible
+      if (event.data && event.data.mode === 'chat') {
+        // Chat mode: add the user's message to chatMessages immediately
+        setChatMessages(function(p) {
+          return p.concat([{ role: 'user', content: event.data.prompt, timestamp: Date.now() / 1000 }]);
+        });
+        setStreamingResponse('');
+        // Clear agentEvents for this turn (tool calls will be added fresh)
+        setAgentEvents([]);
+      } else {
+        // Build mode: clear events
+        setAgentEvents([{ type: 'start', text: event.text, time: new Date().toLocaleTimeString() }]);
+      }
       setProblems([]);
       setReasoningText('');
       addOutputLog(event.text, 'info');
+    } else if (event.type === 'agent_response_complete') {
+      // The agent's full response is ready — add it as an assistant message
+      var responseText = (event.data && event.data.response) || event.text || '';
+      setChatMessages(function(p) {
+        return p.concat([{ role: 'assistant', content: responseText, timestamp: Date.now() / 1000 }]);
+      });
+      setStreamingResponse('');
     } else if (event.type === 'agent_step') {
       setAgentEvents(function(p) { return p.concat([{ type: 'step', text: event.text, time: new Date().toLocaleTimeString(), data: event.data }]); });
       addOutputLog(event.text, 'info');
@@ -309,6 +459,8 @@ function NexusStudioApp() {
         }
         return p.concat([{ type: 'streaming', text: event.text, time: new Date().toLocaleTimeString() }]);
       });
+      // Also accumulate into the streaming response for the chat bubble
+      setStreamingResponse(function(prev) { return prev + event.text; });
     } else if (event.type === 'node_update') {
       setAgentEvents(function(p) { return p.concat([{ type: 'node', text: event.text, time: new Date().toLocaleTimeString(), data: event.data }]); });
     } else if (event.type === 'agent_error') {
@@ -522,21 +674,31 @@ function NexusStudioApp() {
     var prompt = agentPrompt.trim();
     setAgentPrompt('');
     setAgentRunning(true);
-    setAgentEvents([]);
-    setCurrentPlan('');
-    setAnalysisText('');
-    fetch('/api/build', {
+    // In chat mode, the user message is added to chatMessages via the
+    // 'agent_started' WS event (which carries mode='chat'). We don't
+    // clear agentEvents here either — they accumulate per-turn.
+    fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: prompt, auto_repair: true })
+      body: JSON.stringify({ message: prompt })
     }).then(function(r) { return r.json(); }).then(function(data) {
       if (!data.success) {
-        addOutputLog('Agent build failed: ' + data.result, 'error');
+        addOutputLog('Chat failed: ' + (data.message || data.error), 'error');
       }
     }).catch(function(err) {
       addOutputLog('Network error: ' + err, 'error');
       setAgentRunning(false);
     });
+  }
+
+  function clearChat() {
+    setChatMessages([]);
+    setAgentEvents([]);
+    setStreamingResponse('');
+    fetch('/api/chat/history', { method: 'DELETE' });
+    if (activeProject.path) {
+      try { localStorage.removeItem(lsKey('chat_messages')); } catch (e) {}
+    }
   }
 
   function respondToApproval(requestId, approved, remember) {
@@ -1242,20 +1404,58 @@ function NexusStudioApp() {
           </div>
 
           <div className="agent-timeline" ref={agentTimelineRef}>
-            {agentEvents.length === 0 && !currentPlan && (
+            {chatMessages.length === 0 && agentEvents.length === 0 && !agentRunning && (
               <div className="empty-state">
                 <div className="empty-state-icon">🤖</div>
                 <div>Agent is idle</div>
                 <div className="text-xs mt-1">Describe what you want to build below</div>
               </div>
             )}
-            {currentPlan && (
-              <div className="agent-card info">
-                <div className="agent-card-header">📋 Implementation Plan</div>
-                <pre className="agent-card-body" style={{ whiteSpace: 'pre-wrap' }}>{truncate(currentPlan, 400)}</pre>
+
+            {/* Render chat messages as bubbles */}
+            {chatMessages.map(function(msg, idx) {
+              if (msg.role === 'user') {
+                return (
+                  <div key={'msg-' + idx} className="chat-bubble user-bubble">
+                    <div className="chat-bubble-content">{msg.content}</div>
+                  </div>
+                );
+              } else {
+                return (
+                  <div key={'msg-' + idx} className="chat-bubble assistant-bubble">
+                    <div className="chat-bubble-header">🤖 NexusAI</div>
+                    <div className="chat-bubble-content">
+                      <pre className="chat-text">{msg.content}</pre>
+                    </div>
+                    {/* If there are tool events between this message and the previous one, they're rendered above as agentEvents */}
+                  </div>
+                );
+              }
+            })}
+
+            {/* Streaming response (in progress) */}
+            {agentRunning && streamingResponse && (
+              <div className="chat-bubble assistant-bubble">
+                <div className="chat-bubble-header">🤖 NexusAI <span className="text-xs text-dim">typing...</span></div>
+                <div className="chat-bubble-content">
+                  <pre className="chat-text">{streamingResponse}</pre>
+                </div>
               </div>
             )}
-            {agentEvents.map(renderAgentEvent)}
+
+            {/* Tool calls / events for the current turn */}
+            {agentEvents.length > 0 && (
+              <div className="agent-events-panel">
+                {agentEvents.map(renderAgentEvent)}
+              </div>
+            )}
+
+            {/* Clear chat button when there's history */}
+            {chatMessages.length > 0 && !agentRunning && (
+              <button className="btn-secondary text-xs w-full mt-2" onClick={clearChat} title="Clear chat history">
+                🗑 Clear Chat
+              </button>
+            )}
           </div>
 
           <div className="agent-prompt-box">
@@ -1273,7 +1473,7 @@ function NexusStudioApp() {
               }}
             ></textarea>
             <button className="agent-btn-submit w-full" onClick={handleAgentSubmit} disabled={agentRunning || !agentPrompt.trim()}>
-              {agentRunning ? (<React.Fragment><span className="spinner"></span> Building Application...</React.Fragment>) : '▶ Run Autonomous Agent'}
+              {agentRunning ? (<React.Fragment><span className="spinner"></span> Thinking...</React.Fragment>) : '▶ Send'}
             </button>
           </div>
         </aside>
