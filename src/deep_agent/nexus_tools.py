@@ -43,34 +43,54 @@ def build_agent_tools(
     # FILE TOOLS
     # ------------------------------------------------------------------
     @tool
-    def write_file(filename: str, content: str) -> str:
-        """Create or overwrite a file in the active workspace project."""
+    def write_file(filename: str, content: str = "") -> str:
+        """Create or overwrite a file in the active workspace project.
+        If content is omitted or empty, creates an empty file (you can edit_file it later).
+        """
         try:
             full_path = safe_join(filename)
         except ValueError as e:
             return f"ERROR: {e}"
         os.makedirs(os.path.dirname(full_path) or project_path, exist_ok=True)
+        # Be tolerant: if the model sent content as None (some models do),
+        # treat it as empty string so we don't crash.
+        if content is None:
+            content = ""
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(content)
         emit("file_written", f"Wrote {filename} ({len(content)} chars)", {
             "filename": filename, "action": "write", "size": len(content)
         })
-        return f"Successfully wrote {filename}"
+        return f"Successfully wrote {filename} ({len(content)} chars)"
 
     @tool
-    def edit_file(filename: str, search_pattern: str, replacement: str) -> str:
-        """Replace the first occurrence of search_pattern with replacement in filename."""
+    def edit_file(filename: str, search_pattern: str = "", replacement: str = "") -> str:
+        """Replace the first occurrence of search_pattern with replacement in filename.
+        If search_pattern is empty, appends replacement to the end of the file.
+        """
         try:
             full_path = safe_join(filename)
         except ValueError as e:
             return f"ERROR: {e}"
         if not os.path.exists(full_path):
             return f"ERROR: File does not exist: {filename}"
+        # Tolerant of None (some models send null for missing strings)
+        if search_pattern is None:
+            search_pattern = ""
+        if replacement is None:
+            replacement = ""
         with open(full_path, "r", encoding="utf-8") as f:
             content = f.read()
-        if search_pattern not in content:
-            return f"ERROR: Search pattern not found in {filename}."
-        new_content = content.replace(search_pattern, replacement, 1)
+        # If search_pattern is empty or not found, append instead of failing
+        if not search_pattern:
+            new_content = content
+            if new_content and not new_content.endswith("\n"):
+                new_content += "\n"
+            new_content += replacement
+        elif search_pattern not in content:
+            return f"ERROR: Search pattern not found in {filename}. The file content may have changed — try read_file first."
+        else:
+            new_content = content.replace(search_pattern, replacement, 1)
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(new_content)
         emit("file_edited", f"Edited {filename}", {
@@ -81,8 +101,12 @@ def build_agent_tools(
         return f"Successfully updated {filename}"
 
     @tool
-    def read_file(filename: str) -> str:
+    def read_file(filename: str = "") -> str:
         """Read content of a project file."""
+        if filename is None:
+            filename = ""
+        if not filename.strip():
+            return "ERROR: filename is required"
         try:
             full_path = safe_join(filename)
         except ValueError as e:
@@ -98,8 +122,12 @@ def build_agent_tools(
             return f"ERROR: {e}"
 
     @tool
-    def delete_file(filename: str) -> str:
+    def delete_file(filename: str = "") -> str:
         """Delete a file or directory from the workspace."""
+        if filename is None:
+            filename = ""
+        if not filename.strip():
+            return "ERROR: filename is required"
         try:
             full_path = safe_join(filename)
         except ValueError as e:
@@ -115,8 +143,12 @@ def build_agent_tools(
         return f"Deleted {filename}"
 
     @tool
-    def create_directory(path: str) -> str:
+    def create_directory(path: str = "") -> str:
         """Create a new directory (and parents) inside the workspace."""
+        if path is None:
+            path = ""
+        if not path.strip():
+            return "ERROR: path is required"
         try:
             full_path = safe_join(path)
         except ValueError as e:
@@ -146,9 +178,13 @@ def build_agent_tools(
         return result
 
     @tool
-    def search_files(query: str) -> str:
+    def search_files(query: str = "") -> str:
         """Search text occurrences in workspace files. Returns file:line content."""
+        if query is None:
+            query = ""
         matches = []
+        if not query.strip():
+            return "ERROR: query is required"
         ignored = {".git", ".venv", "__pycache__", "node_modules", "dist", "build"}
         for root, dirs, filenames in os.walk(project_path):
             dirs[:] = [d for d in dirs if d not in ignored]
@@ -170,8 +206,10 @@ def build_agent_tools(
     # TERMINAL & BUILD TOOLS
     # ------------------------------------------------------------------
     @tool
-    def run_terminal(command: str) -> str:
+    def run_terminal(command: str = "") -> str:
         """Run a terminal command inside the workspace (npm install, npm run build, etc.)."""
+        if command is None:
+            command = ""
         if not command.strip():
             return "ERROR: empty command"
         if command.strip().startswith("echo "):
@@ -210,8 +248,12 @@ def build_agent_tools(
             return err
 
     @tool
-    def install_dependency(package: str, manager: str = "auto") -> str:
+    def install_dependency(package: str = "", manager: str = "auto") -> str:
         """Install a dependency using npm, pip, or another detected package manager."""
+        if package is None:
+            package = ""
+        if not package.strip():
+            return "ERROR: package name is required"
         # Detect package manager
         if manager == "auto":
             if os.path.exists(os.path.join(project_path, "package.json")):
