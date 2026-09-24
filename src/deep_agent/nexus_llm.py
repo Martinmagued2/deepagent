@@ -73,7 +73,8 @@ class ProviderConfig(BaseModel):
     provider_name: str = Field(default="OpenRouter")
     base_url: str = Field(default="https://openrouter.ai/api/v1")
     # NOTE: api_key is NOT persisted to the config file — it goes to the OS keyring.
-    api_key: Optional[str] = Field(default="", exclude=True)
+    # We exclude it from JSON serialization manually in save_settings().
+    api_key: Optional[str] = Field(default="")
     model: str = Field(default="google/gemini-2.0-flash-exp:free")
     temperature: float = Field(default=0.0)
     max_tokens: Optional[int] = Field(default=4096)
@@ -139,14 +140,17 @@ def load_settings() -> NexusSettings:
 
 
 def save_settings(settings: NexusSettings) -> None:
-    """Persist settings WITHOUT the API key (which goes to secure storage)."""
+    """Persist settings. If api_key is empty, KEEP the existing stored key
+    (don't clear it — the UI sends empty because the field is masked).
+    Use clear_credentials() explicitly to wipe the key.
+    """
     data = settings.dict()
     api_key = data.get("ai", {}).pop("api_key", "")
-    # Persist the API key to secure storage (keyring or encrypted fallback)
+    # If a new key was provided, store it. If empty, keep the existing key.
     if api_key:
         store_api_key(api_key)
-    else:
-        clear_api_key()
+    # If api_key is empty, do NOTHING — the existing key stays in storage.
+    # (Clearing is handled by the dedicated DELETE /api/settings/credentials endpoint.)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 

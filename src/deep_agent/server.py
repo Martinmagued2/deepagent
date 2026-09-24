@@ -24,7 +24,7 @@ from deep_agent.nexus_llm import (
     get_chat_model,
     get_presets,
 )
-from deep_agent.nexus_credentials import has_api_key, load_api_key
+from deep_agent.nexus_credentials import has_api_key, load_api_key, storage_info
 from deep_agent.nexus_workspace import workspace_mgr
 from deep_agent.nexus_experience import experience_network, Experience
 from deep_agent.nexus_git import (
@@ -136,13 +136,36 @@ async def get_settings():
 @app.post("/api/settings")
 async def update_settings(settings: NexusSettings):
     save_settings(settings)
-    return {"status": "saved", "has_api_key": has_api_key()}
+    # Verify: if the user provided a NEW key, confirm it was stored.
+    # If they sent an empty key, we kept the existing one — check it's still there.
+    key_ok = has_api_key()
+    if settings.ai.api_key and not key_ok:
+        # User entered a key but storage failed
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": "Failed to store API key securely. Check file permissions in your home directory.",
+                "has_api_key": False,
+                "storage_info": storage_info(),
+            },
+        )
+    return {"status": "saved", "has_api_key": key_ok}
 
 
 @app.delete("/api/settings/credentials")
 async def delete_credentials():
     clear_credentials()
     return {"status": "cleared", "has_api_key": False}
+
+
+@app.get("/api/debug/credentials")
+async def debug_credentials():
+    """Diagnostic endpoint — returns whether the key is stored (never reveals the key itself)."""
+    info = storage_info()
+    info["env_openrouter_key"] = bool(os.getenv("OPENROUTER_API_KEY"))
+    info["env_openai_key"] = bool(os.getenv("OPENAI_API_KEY"))
+    return info
 
 
 @app.get("/api/providers/presets")
@@ -542,6 +565,21 @@ class AgentBuildRequest(BaseModel):
 async def run_agent_build(req: AgentBuildRequest):
     settings = load_settings()
     active_path = workspace_mgr.active_project_path
+
+    # Pre-flight check: verify API key is available before starting
+    # (local LLMs like Ollama don't need a key)
+    is_local = settings.ai.provider_type == "local" or settings.ai.provider_name.lower() in ("ollama", "lmstudio", "vllm")
+    if not is_local:
+        api_key = settings.ai.api_key or load_api_key() or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            err_msg = "No API key configured. Go to Settings → AI Provider, enter your API key, and click Save."
+            broadcast_event("agent_started", "Agent start blocked: missing API key.", {"prompt": req.prompt, "project": active_path})
+            broadcast_event("agent_error", err_msg, {
+                "error": "missing_api_key",
+                "hint": "Open Settings (Ctrl+,) → AI Provider → enter your API key → Save. Then try again.",
+            })
+            broadcast_event("agent_finished", "Agent stopped: missing API key.", {"success": False})
+            return {"success": False, "error": "missing_api_key", "message": err_msg, "workspace": active_path}
 
     # Auto-retrieve experiences
     exps = experience_network.search(req.prompt)[:2]
