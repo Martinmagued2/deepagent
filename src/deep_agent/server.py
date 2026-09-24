@@ -221,6 +221,14 @@ class FileRenameRequest(BaseModel):
     new_path: str
 
 
+class FileDeleteRequest(BaseModel):
+    path: str
+
+
+class FilePathRequest(BaseModel):
+    path: str
+
+
 @app.get("/api/workspace/file")
 async def read_file(path: str = Query(...)):
     try:
@@ -254,7 +262,7 @@ async def create_entry(req: FileCreateRequest):
 
 
 @app.post("/api/workspace/delete")
-async def delete_entry(req: FileRenameRequest):
+async def delete_entry(req: FileDeleteRequest):
     try:
         workspace_mgr.delete_entry(req.path)
         broadcast_event("file_deleted", f"Deleted {req.path}", {"path": req.path})

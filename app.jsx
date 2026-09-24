@@ -69,6 +69,15 @@ function NexusStudioApp() {
   var [approvalRequest, setApprovalRequest] = useState(null);
   var [diffViewer, setDiffViewer] = useState(null);
 
+  // Resizable panel dimensions
+  var [sidebarWidth, setSidebarWidth] = useState(240);
+  var [agentPanelWidth, setAgentPanelWidth] = useState(380);
+  var [bottomPanelHeight, setBottomPanelHeight] = useState(220);
+  var [previewWidth, setPreviewWidth] = useState(0.5);  // fraction 0..1 of editor row
+
+  // Drag state for resizers
+  var [drag, setDrag] = useState(null);  // null | { type: 'sidebar'|'agent'|'bottom'|'preview', startX, startY, startVal }
+
   // Project & Workspace
   var [activeProject, setActiveProject] = useState({ path: '', name: 'Loading...', recent: [] });
   var [fileTree, setFileTree] = useState([]);
@@ -190,6 +199,71 @@ function NexusStudioApp() {
       terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [terminalLogs]);
+
+  // ============================================================
+  // RESIZING — global mouse handlers while dragging a splitter
+  // ============================================================
+  useEffect(function() {
+    if (!drag) return;
+
+    function onMouseMove(e) {
+      if (!drag) return;
+      var dx = e.clientX - drag.startX;
+      var dy = e.clientY - drag.startY;
+
+      if (drag.type === 'sidebar') {
+        // Moving right increases sidebar width
+        var newW = drag.startVal + dx;
+        setSidebarWidth(Math.max(160, Math.min(500, newW)));
+      } else if (drag.type === 'agent') {
+        // Moving left (negative dx) increases agent panel width
+        var newAW = drag.startVal - dx;
+        setAgentPanelWidth(Math.max(240, Math.min(600, newAW)));
+      } else if (drag.type === 'bottom') {
+        // Moving down increases bottom panel height
+        var newBH = drag.startVal + dy;
+        setBottomPanelHeight(Math.max(80, Math.min(600, newBH)));
+      } else if (drag.type === 'preview') {
+        // Horizontal drag adjusts preview fraction (0.15..0.85)
+        var editorRow = document.querySelector('.editor-workspace-view');
+        if (editorRow) {
+          var totalW = editorRow.getBoundingClientRect().width;
+          if (totalW > 0) {
+            var newFrac = drag.startVal + (dx / totalW);
+            setPreviewWidth(Math.max(0.15, Math.min(0.85, newFrac)));
+          }
+        }
+      }
+    }
+
+    function onMouseUp() {
+      setDrag(null);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = drag.type === 'bottom' ? 'ns-resize' : 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return function() {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [drag]);
+
+  function startDrag(type, e) {
+    e.preventDefault();
+    var startVal;
+    if (type === 'sidebar') startVal = sidebarWidth;
+    else if (type === 'agent') startVal = agentPanelWidth;
+    else if (type === 'bottom') startVal = bottomPanelHeight;
+    else if (type === 'preview') startVal = previewWidth;
+    setDrag({ type: type, startX: e.clientX, startY: e.clientY, startVal: startVal });
+  }
 
   // ============================================================
   // WEBSOCKET EVENT HANDLER
@@ -703,7 +777,19 @@ function NexusStudioApp() {
       </header>
 
       {/* ===== WORKBENCH ===== */}
-      <div className={"nexus-workbench" + (showAgentPanel ? '' : ' no-agent') + (showSidebar ? '' : ' no-sidebar')}>
+      <div
+        className={"nexus-workbench" + (showAgentPanel ? '' : ' no-agent') + (showSidebar ? '' : ' no-sidebar')}
+        style={{
+          gridTemplateColumns: [
+            '48px',
+            (showSidebar ? (sidebarWidth + 'px') : '0px'),
+            (showSidebar ? '4px' : '0px'),  // sidebar resizer
+            '1fr',
+            (showAgentPanel ? '4px' : '0px'),  // agent resizer
+            (showAgentPanel ? (agentPanelWidth + 'px') : '0px'),
+          ].join(' '),
+        }}
+      >
         {/* Activity Bar */}
         <aside className="activity-bar">
           <button className={"activity-btn " + (activeView === 'explorer' && showSidebar ? 'active' : '')} onClick={function() { if (activeView === 'explorer' && showSidebar) { setShowSidebar(false); } else { setActiveView('explorer'); setShowSidebar(true); } }} title="Explorer">📁</button>
@@ -880,8 +966,20 @@ function NexusStudioApp() {
         </div>
         )}
 
+        {/* Sidebar resizer (between sidebar and editor) */}
+        {showSidebar && (
+          <div
+            className="resizer resizer-vertical"
+            onMouseDown={function(e) { startDrag('sidebar', e); }}
+            title="Drag to resize sidebar"
+          ></div>
+        )}
+
         {/* Center Editor */}
-        <div className={"workbench-center" + (showBottomPanel ? '' : ' no-bottom')}>
+        <div
+          className={"workbench-center" + (showBottomPanel ? '' : ' no-bottom')}
+          style={showBottomPanel ? { gridTemplateRows: '35px 1fr 4px ' + bottomPanelHeight + 'px' } : undefined}
+        >
           {/* Tabs */}
           <div className="editor-tabs">
             {openTabs.length === 0 ? (
@@ -903,8 +1001,21 @@ function NexusStudioApp() {
           </div>
 
           {/* Monaco + Preview */}
-          <div className={"editor-workspace-view" + (showPreview ? '' : ' no-preview')}>
+          <div
+            className={"editor-workspace-view" + (showPreview ? '' : ' no-preview')}
+            style={showPreview ? {
+              gridTemplateColumns: ((previewWidth * 100) + '% 4px ' + ((1 - previewWidth) * 100) + '%'),
+            } : undefined}
+          >
             <div ref={editorContainerRef} className="monaco-container"></div>
+
+            {showPreview && (
+              <div
+                className="resizer resizer-vertical"
+                onMouseDown={function(e) { startDrag('preview', e); }}
+                title="Drag to resize preview"
+              ></div>
+            )}
 
             {showPreview && (
               <div className="preview-split-pane">
@@ -923,6 +1034,15 @@ function NexusStudioApp() {
               </div>
             )}
           </div>
+
+          {/* Bottom panel resizer (between editor and bottom panel) */}
+          {showBottomPanel && (
+            <div
+              className="resizer resizer-horizontal"
+              onMouseDown={function(e) { startDrag('bottom', e); }}
+              title="Drag to resize panel"
+            ></div>
+          )}
 
           {/* Bottom Panel */}
           {showBottomPanel && (
@@ -999,6 +1119,15 @@ function NexusStudioApp() {
           </div>
           )}
         </div>
+
+        {/* Agent panel resizer (between editor and agent panel) */}
+        {showAgentPanel && (
+          <div
+            className="resizer resizer-vertical"
+            onMouseDown={function(e) { startDrag('agent', e); }}
+            title="Drag to resize agent panel"
+          ></div>
+        )}
 
         {/* Agent Panel (Right) — toggleable */}
         {showAgentPanel && (

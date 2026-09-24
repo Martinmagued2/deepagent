@@ -198,21 +198,17 @@ body.nexus-ide-body {
    ============================================================ */
 .nexus-workbench {
   display: grid;
-  grid-template-columns: 48px 240px 1fr 340px;
+  /* grid-template-columns is set inline by JSX based on panel visibility & widths */
   height: 100%;
   overflow: hidden;
 }
 
-.nexus-workbench.no-agent {
-  grid-template-columns: 48px 240px 1fr;
-}
-
-.nexus-workbench.no-sidebar {
-  grid-template-columns: 48px 1fr 340px;
-}
-
+/* These classes are kept for selector targeting, but column widths
+   are now dynamic via inline style. */
+.nexus-workbench.no-agent,
+.nexus-workbench.no-sidebar,
 .nexus-workbench.no-agent.no-sidebar {
-  grid-template-columns: 48px 1fr;
+  /* no-op: inline style handles the grid template */
 }
 
 /* ============================================================
@@ -417,14 +413,14 @@ body.nexus-ide-body {
    ============================================================ */
 .workbench-center {
   display: grid;
-  grid-template-rows: 35px 1fr 200px;
+  /* grid-template-rows is set inline by JSX: 35px 1fr 4px {bottomHeight}px */
   background: var(--bg-editor);
   overflow: hidden;
   min-width: 0;
 }
 
 .workbench-center.no-bottom {
-  grid-template-rows: 35px 1fr;
+  grid-template-rows: 35px 1fr !important;
 }
 
 /* Editor Tabs (flat, VS Code style) */
@@ -507,14 +503,14 @@ body.nexus-ide-body {
 /* Editor + Preview Split */
 .editor-workspace-view {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* grid-template-columns is set inline by JSX based on showPreview + previewWidth */
   background: var(--bg-editor);
   overflow: hidden;
   min-height: 0;
 }
 
 .editor-workspace-view.no-preview {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr !important;
 }
 
 .monaco-container {
@@ -1238,13 +1234,33 @@ textarea.form-control { resize: vertical; min-height: 60px; }
 .badge-danger { background: var(--danger-bg); color: var(--danger); }
 .badge-info { background: var(--info-bg); color: var(--info); }
 
-/* Resizer (visual only — split pane handle) */
+/* Resizer — draggable splitter between panels */
 .resizer {
-  width: 4px;
   background: transparent;
-  cursor: col-resize;
   transition: background var(--t-fast);
   flex-shrink: 0;
+  position: relative;
+  z-index: 10;
 }
 
-.resizer:hover { background: var(--accent); }
+.resizer-vertical {
+  width: 4px;
+  cursor: col-resize;
+  height: 100%;
+}
+
+.resizer-vertical:hover,
+.resizer-vertical:active {
+  background: var(--accent);
+}
+
+.resizer-horizontal {
+  height: 4px;
+  cursor: row-resize;
+  width: 100%;
+}
+
+.resizer-horizontal:hover,
+.resizer-horizontal:active {
+  background: var(--accent);
+}
