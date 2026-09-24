@@ -148,7 +148,6 @@ function setupEventListeners() {
 function renderAll() {
     renderStats();
     renderCoursesGrid();
-    renderRecentTasks();
     renderCalendar();
     renderDeadlines();
     updatePageTitle();
