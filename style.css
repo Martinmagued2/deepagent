@@ -744,6 +744,11 @@ body.nexus-ide-body {
 .agent-card.error { border-left: 2px solid var(--danger); }
 .agent-card.warning { border-left: 2px solid var(--warning); }
 .agent-card.info { border-left: 2px solid var(--info); }
+.agent-card.reasoning-card {
+  border-left: 2px solid var(--accent-purple, #c586c0);
+  background: rgba(197, 134, 192, 0.04);
+  border-color: rgba(197, 134, 192, 0.15);
+}
 
 .agent-card-body {
   margin-top: 4px;

@@ -91,6 +91,7 @@ function NexusStudioApp() {
   var [agentEvents, setAgentEvents] = useState([]);
   var [currentPlan, setCurrentPlan] = useState('');
   var [analysisText, setAnalysisText] = useState('');
+  var [reasoningText, setReasoningText] = useState('');
 
   // Terminal
   var [terminalInput, setTerminalInput] = useState('');
@@ -133,6 +134,7 @@ function NexusStudioApp() {
   var monacoEditorInstance = useRef(null);
   var previewIframeRef = useRef(null);
   var terminalEndRef = useRef(null);
+  var agentTimelineRef = useRef(null);
 
   // ============================================================
   // INITIALIZATION & WEBSOCKET
@@ -199,6 +201,13 @@ function NexusStudioApp() {
       terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [terminalLogs]);
+
+  // Auto-scroll agent timeline to bottom when new events arrive
+  useEffect(function() {
+    if (agentTimelineRef.current) {
+      agentTimelineRef.current.scrollTop = agentTimelineRef.current.scrollHeight;
+    }
+  }, [agentEvents]);
 
   // ============================================================
   // RESIZING — global mouse handlers while dragging a splitter
@@ -273,15 +282,46 @@ function NexusStudioApp() {
       setAgentRunning(true);
       setAgentEvents([{ type: 'start', text: event.text, time: new Date().toLocaleTimeString() }]);
       setProblems([]);
+      setReasoningText('');
       addOutputLog(event.text, 'info');
     } else if (event.type === 'agent_step') {
       setAgentEvents(function(p) { return p.concat([{ type: 'step', text: event.text, time: new Date().toLocaleTimeString(), data: event.data }]); });
       addOutputLog(event.text, 'info');
+    } else if (event.type === 'agent_reasoning') {
+      // Replace the reasoning text (each reasoning message is a complete thought)
+      setReasoningText(event.text);
+      setAgentEvents(function(p) {
+        // If the last event is a reasoning event, update it; otherwise add new
+        if (p.length > 0 && p[p.length - 1].type === 'reasoning') {
+          var updated = p.slice();
+          updated[updated.length - 1] = { type: 'reasoning', text: event.text, time: new Date().toLocaleTimeString() };
+          return updated;
+        }
+        return p.concat([{ type: 'reasoning', text: event.text, time: new Date().toLocaleTimeString() }]);
+      });
+    } else if (event.type === 'agent_token') {
+      // Streaming LLM token — append to the last reasoning event
+      setAgentEvents(function(p) {
+        if (p.length > 0 && p[p.length - 1].type === 'streaming') {
+          var updated = p.slice();
+          updated[updated.length - 1] = { type: 'streaming', text: updated[updated.length - 1].text + event.text, time: new Date().toLocaleTimeString() };
+          return updated;
+        }
+        return p.concat([{ type: 'streaming', text: event.text, time: new Date().toLocaleTimeString() }]);
+      });
+    } else if (event.type === 'node_update') {
+      setAgentEvents(function(p) { return p.concat([{ type: 'node', text: event.text, time: new Date().toLocaleTimeString(), data: event.data }]); });
+    } else if (event.type === 'agent_error') {
+      setAgentEvents(function(p) { return p.concat([{ type: 'error', text: event.text, time: new Date().toLocaleTimeString(), data: event.data, clickable: true }]); });
+      addOutputLog('ERROR: ' + event.text, 'error');
     } else if (event.type === 'analysis_ready') {
       setAnalysisText(event.text);
+      setAgentEvents(function(p) { return p.concat([{ type: 'analysis', text: event.text, time: new Date().toLocaleTimeString() }]); });
     } else if (event.type === 'plan_ready') {
       setCurrentPlan(event.data.plan || event.text);
       setAgentEvents(function(p) { return p.concat([{ type: 'plan', text: 'Plan Generated', data: event.data, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'file_creating' || event.type === 'file_editing') {
+      setAgentEvents(function(p) { return p.concat([{ type: 'file_action', text: event.text, time: new Date().toLocaleTimeString(), data: event.data }]); });
     } else if (event.type === 'file_written' || event.type === 'file_edited' || event.type === 'file_deleted' || event.type === 'file_created' || event.type === 'file_renamed' || event.type === 'file_saved') {
       loadWorkspaceTree();
       loadGitStatus();
@@ -294,6 +334,12 @@ function NexusStudioApp() {
       setTerminalLogs(function(p) { return p.concat({ text: event.data.stdout || event.data.stderr || event.text, type: event.data.code === 0 ? 'success' : 'error' }); });
     } else if (event.type === 'command_denied') {
       setTerminalLogs(function(p) { return p.concat({ text: '[DENIED] ' + event.data.command, type: 'warning' }); });
+    } else if (event.type === 'installing') {
+      setAgentEvents(function(p) { return p.concat([{ type: 'install', text: event.text, time: new Date().toLocaleTimeString(), data: event.data }]); });
+    } else if (event.type === 'building') {
+      setAgentEvents(function(p) { return p.concat([{ type: 'building', text: event.text, time: new Date().toLocaleTimeString() }]); });
+    } else if (event.type === 'testing') {
+      setAgentEvents(function(p) { return p.concat([{ type: 'testing', text: event.text, time: new Date().toLocaleTimeString() }]); });
     } else if (event.type === 'build_result') {
       setAgentEvents(function(p) { return p.concat([{ type: 'build', text: event.text, passed: event.data.passed, time: new Date().toLocaleTimeString(), data: event.data, clickable: true }]); });
       if (!event.data.passed) {
@@ -691,21 +737,72 @@ function NexusStudioApp() {
       cardClass += ev.passed ? ' success' : ' error';
     } else if (ev.type === 'done') {
       cardClass += ' success';
-    } else if (ev.type === 'start' || ev.type === 'step' || ev.type === 'plan') {
+    } else if (ev.type === 'start' || ev.type === 'step' || ev.type === 'plan' || ev.type === 'node') {
       cardClass += ' info';
-    } else if (ev.type === 'file') {
+    } else if (ev.type === 'file' || ev.type === 'file_action') {
       cardClass += ' success';
+    } else if (ev.type === 'error') {
+      cardClass += ' error';
+    } else if (ev.type === 'reasoning' || ev.type === 'streaming' || ev.type === 'analysis') {
+      cardClass += ' reasoning-card';
+    } else if (ev.type === 'install' || ev.type === 'building' || ev.type === 'testing') {
+      cardClass += ' warning';
     }
     if (ev.clickable) cardClass += ' clickable';
 
     var icon = '⚡';
-    if (ev.type === 'file') icon = '📄';
+    if (ev.type === 'file' || ev.type === 'file_action') icon = '📄';
     else if (ev.type === 'build') icon = ev.passed ? '✓' : '✗';
     else if (ev.type === 'test') icon = ev.passed ? '✓' : '✗';
     else if (ev.type === 'done') icon = '🎉';
     else if (ev.type === 'plan') icon = '📋';
     else if (ev.type === 'command') icon = '$';
     else if (ev.type === 'experience') icon = '🌐';
+    else if (ev.type === 'reasoning' || ev.type === 'streaming') icon = '💭';
+    else if (ev.type === 'analysis') icon = '🔍';
+    else if (ev.type === 'error') icon = '⚠';
+    else if (ev.type === 'node') icon = '◦';
+    else if (ev.type === 'install') icon = '📦';
+    else if (ev.type === 'building') icon = '🔨';
+    else if (ev.type === 'testing') icon = '🧪';
+
+    // Reasoning and streaming tokens get special rendering
+    if (ev.type === 'reasoning' || ev.type === 'streaming' || ev.type === 'analysis') {
+      return (
+        <div key={idx} className={cardClass}>
+          <div className="agent-card-header">
+            <span>{icon}</span>
+            <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-dim)' }}>
+              {ev.type === 'reasoning' ? 'Reasoning' : ev.type === 'analysis' ? 'Analysis' : 'Thinking'}
+            </span>
+          </div>
+          <div className="agent-card-body" style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.5, marginTop: 4 }}>
+            {ev.text}
+          </div>
+        </div>
+      );
+    }
+
+    // Error events with expandable traceback
+    if (ev.type === 'error') {
+      return (
+        <div
+          key={idx}
+          className={cardClass}
+          onClick={ev.clickable ? function() { viewEventDetail(ev); } : null}
+        >
+          <div className="agent-card-header" style={{ color: 'var(--danger)' }}>
+            <span>{icon}</span>
+            <span>{ev.text.substring(0, 200)}</span>
+          </div>
+          {ev.data && ev.data.traceback && (
+            <div className="agent-card-body" style={{ color: 'var(--danger)', fontSize: 10, marginTop: 4 }}>
+              Click to view full error trace
+            </div>
+          )}
+        </div>
+      );
+    }
 
     return (
       <div
@@ -1144,7 +1241,7 @@ function NexusStudioApp() {
             </div>
           </div>
 
-          <div className="agent-timeline">
+          <div className="agent-timeline" ref={agentTimelineRef}>
             {agentEvents.length === 0 && !currentPlan && (
               <div className="empty-state">
                 <div className="empty-state-icon">🤖</div>

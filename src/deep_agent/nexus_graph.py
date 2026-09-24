@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 from typing import TypedDict, Optional, Callable, Dict, Any, List
 
 from langgraph.graph import StateGraph, START, END
@@ -37,15 +38,41 @@ def create_nexus_graph(
     approval_callback: Optional[Callable[[str, str, dict], bool]] = None,
     enable_browser_testing: bool = True,
 ):
-    """Build the NexusAI LangGraph agent.
-
-    Stages: START → analyze → plan → inspect → implement → build → test → evaluate
-            → (repair if failed) → complete → END
-    """
     settings = load_settings()
     model = get_chat_model(provider_config)
     tools = build_agent_tools(project_path, event_emitter, approval_callback)
-    deep_agent = create_deep_agent(model=model, tools=tools)
+
+    # Create the deep agent with a rich system prompt
+    system_prompt = f"""You are NexusAI, an autonomous senior software engineer working inside a desktop IDE.
+
+Your workspace is: {project_path}
+
+You have access to tools for reading, writing, and editing files, running terminal commands, 
+installing dependencies, running builds and tests, and searching the codebase.
+
+WORKFLOW:
+1. First, use list_directory() to understand the current workspace state.
+2. Read any existing files that are relevant to the task.
+3. Create a mental plan of what files to create or modify.
+4. Implement the solution by writing files and running commands.
+5. If it's a web project, make sure all interactive elements actually work.
+6. Run the build to verify everything compiles.
+7. If the build fails, read the error, fix the issue, and rebuild.
+
+IMPORTANT RULES:
+- Actually CREATE files using write_file(). Do not just describe what to do.
+- Make sure all code is complete and functional — no placeholders or TODOs.
+- For npm projects, create package.json first, then call install_dependency().
+- For web apps, ensure index.html, style.css, and script.js all exist and work.
+- If a command fails, read the error output and fix the root cause.
+- Think step by step before each action.
+"""
+
+    deep_agent = create_deep_agent(
+        model=model,
+        tools=tools,
+        system_prompt=system_prompt,
+    )
 
     def emit(event_type: str, text: str, data: dict = None):
         if event_emitter:
@@ -54,10 +81,11 @@ def create_nexus_graph(
     # ------------------------------------------------------------------
     # NODE: ANALYZE
     # ------------------------------------------------------------------
-    def analyze_node(state: AgentWorkflowState):
-        emit("agent_step", "Analyzing user request and workspace context...", {"step": "analyze"})
-        prompt = f"""You are the senior architect of NexusAI.
-Analyze this user request and identify the type of application, key features, and technical stack required.
+    async def analyze_node(state: AgentWorkflowState):
+        emit("agent_step", "🔍 Analyzing your request...", {"step": "analyze"})
+        emit("agent_reasoning", "Understanding what you want to build and planning the approach.", {})
+
+        prompt = f"""Analyze this user request and identify the type of application, key features, and technical stack required.
 
 User Request: {state['user_request']}
 Project Path: {state['project_path']}
@@ -66,98 +94,140 @@ Output a brief technical analysis (3-5 bullets) covering:
 - Application type (web app, API, mobile, etc.)
 - Recommended tech stack
 - Key features to implement
-- Potential risks or complexities
+- File structure needed
 """
         try:
-            res = model.invoke([HumanMessage(content=prompt)])
+            res = await model.ainvoke([HumanMessage(content=prompt)])
             analysis = res.content if hasattr(res, "content") else str(res)
         except Exception as e:
             analysis = f"Fallback analysis: build {state['user_request'][:80]} (LLM error: {e})"
+            emit("agent_error", f"Analysis LLM error: {e}", {"error": str(e)})
+
         emit("analysis_ready", analysis, {"step": "analyze"})
+        emit("agent_reasoning", analysis, {})
         return {"status": "analyzed", "project_plan": analysis}
 
     # ------------------------------------------------------------------
-    # NODE: PLAN
+    # NODE: IMPLEMENT (streamed)
     # ------------------------------------------------------------------
-    def plan_node(state: AgentWorkflowState):
-        emit("agent_step", "Generating implementation plan...", {"step": "plan"})
+    async def implement_node(state: AgentWorkflowState):
+        emit("agent_step", "⚡ Implementing your application...", {"step": "implement"})
+
         exp_context = ""
         if state.get("relevant_experiences"):
             exp_context = f"\n\nRelevant Verified Experiences:\n{state['relevant_experiences']}"
-        prompt = f"""You are the senior software architect of NexusAI.
 
-User Request: {state['user_request']}
-Project Path: {state['project_path']}
-Analysis: {state.get('project_plan', '')}{exp_context}
+        plan = state.get("project_plan", "")
 
-Provide a concise, actionable multi-step plan to implement this application.
-For each step specify:
-- Files to create or modify
-- Libraries/dependencies needed
-- Brief description of what each file does
-"""
-        try:
-            res = model.invoke([HumanMessage(content=prompt)])
-            plan_text = res.content if hasattr(res, "content") else str(res)
-        except Exception as e:
-            plan_text = f"1. Inspect existing workspace\n2. Create application files\n3. Install deps\n4. Build & verify\n(Fallback due to: {e})"
-        emit("plan_ready", plan_text, {"plan": plan_text})
-        return {"project_plan": plan_text, "status": "planned"}
-
-    # ------------------------------------------------------------------
-    # NODE: INSPECT
-    # ------------------------------------------------------------------
-    def inspect_node(state: AgentWorkflowState):
-        emit("agent_step", "Inspecting existing workspace files...", {"step": "inspect"})
-        # Just let the deep agent list the directory and decide what to keep
-        try:
-            deep_agent.invoke({
-                "messages": [{
-                    "role": "user",
-                    "content": (
-                        f"Inspect the workspace at {state['project_path']} using list_directory(). "
-                        "Report what files already exist. Do NOT modify anything yet."
-                    ),
-                }]
-            })
-        except Exception as e:
-            emit("agent_error", f"Inspect error: {e}", {"error": str(e)})
-        return {"status": "inspected"}
-
-    # ------------------------------------------------------------------
-    # NODE: IMPLEMENT
-    # ------------------------------------------------------------------
-    def implement_node(state: AgentWorkflowState):
-        emit("agent_step", "Implementing application files...", {"step": "implement"})
-        prompt = f"""You are an autonomous senior software engineer working in {state['project_path']}.
+        prompt = f"""You are working in: {state['project_path']}
 
 USER REQUEST:
 {state['user_request']}
 
-IMPLEMENTATION PLAN:
-{state.get('project_plan', '')}
+TECHNICAL ANALYSIS:
+{plan}{exp_context}
 
-RULES:
-1. Inspect directory structure using list_directory().
-2. Create/update clean files using write_file() or edit_file().
-3. For npm packages, write package.json and call install_dependency().
-4. If web app, ensure all interactive elements and styling are fully implemented.
-5. Do not create unnecessary files.
-6. After implementation, call run_build() to verify the build.
+NOW IMPLEMENT THE APPLICATION:
+1. Call list_directory() to see what already exists.
+2. Create all necessary files using write_file().
+3. For npm projects: create package.json, then call install_dependency() for each package.
+4. For web apps: create index.html, style.css, script.js — all fully functional.
+5. Make sure all interactive elements (buttons, forms, etc.) actually work.
+6. Do NOT leave placeholders or TODOs — write complete, working code.
+
+Start by listing the directory, then create files one by one.
 """
+
+        emit("agent_reasoning", "Starting implementation. I'll inspect the workspace and then create files.", {})
+
+        # Stream the agent execution so we get real-time tokens + tool calls
+        files_created = []
+        commands_run = []
+
         try:
-            deep_agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+            async for event in deep_agent.astream_events(
+                {"messages": [{"role": "user", "content": prompt}]},
+                version="v2",
+            ):
+                evt_type = event.get("event", "")
+                evt_name = event.get("name", "")
+                evt_data = event.get("data", {})
+
+                # LLM token streaming
+                if evt_type == "on_chat_model_stream":
+                    chunk = evt_data.get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        emit("agent_token", chunk.content, {})
+
+                # Tool start
+                elif evt_type == "on_tool_start":
+                    tool_input = evt_data.get("input", {})
+                    if evt_name == "write_file":
+                        fname = tool_input.get("filename", "?") if isinstance(tool_input, dict) else "?"
+                        files_created.append(fname)
+                        emit("file_creating", f"Writing {fname}...", {"filename": fname})
+                        emit("agent_reasoning", f"Creating file: {fname}", {})
+                    elif evt_name == "edit_file":
+                        fname = tool_input.get("filename", "?") if isinstance(tool_input, dict) else "?"
+                        emit("file_editing", f"Editing {fname}...", {"filename": fname})
+                        emit("agent_reasoning", f"Editing file: {fname}", {})
+                    elif evt_name == "run_terminal":
+                        cmd = tool_input.get("command", "?") if isinstance(tool_input, dict) else "?"
+                        commands_run.append(cmd)
+                        emit("command_running", f"$ {cmd}", {"command": cmd, "cwd": project_path})
+                    elif evt_name == "install_dependency":
+                        pkg = tool_input.get("package", "?") if isinstance(tool_input, dict) else "?"
+                        emit("installing", f"Installing {pkg}...", {"package": pkg})
+                        emit("agent_reasoning", f"Installing dependency: {pkg}", {})
+                    elif evt_name == "read_file":
+                        fname = tool_input.get("filename", "?") if isinstance(tool_input, dict) else "?"
+                        emit("agent_reasoning", f"Reading file: {fname}", {})
+                    elif evt_name == "list_directory":
+                        emit("agent_reasoning", "Listing workspace files...", {})
+                    elif evt_name == "run_build":
+                        emit("building", "Running build...", {})
+                        emit("agent_reasoning", "Running build to verify...", {})
+                    elif evt_name == "run_tests":
+                        emit("testing", "Running tests...", {})
+                        emit("agent_reasoning", "Running test suite...", {})
+                    else:
+                        emit("agent_reasoning", f"Calling tool: {evt_name}", {})
+
+                # Tool end
+                elif evt_type == "on_tool_end":
+                    output = evt_data.get("output", "")
+                    output_str = str(output)[:500] if output else ""
+                    if evt_name == "write_file":
+                        # The file_written event was already emitted by the tool itself
+                        pass
+                    elif evt_name == "run_terminal":
+                        emit("agent_reasoning", f"Command finished: {output_str[:200]}", {})
+                    elif evt_name == "install_dependency":
+                        emit("agent_reasoning", f"Install result: {output_str[:200]}", {})
+                    elif evt_name == "list_directory":
+                        emit("agent_reasoning", f"Found files: {output_str[:300]}", {})
+
+                # Error events
+                elif evt_type == "on_chain_error" or "error" in evt_type.lower():
+                    err_msg = str(evt_data)[:500]
+                    emit("agent_error", f"Agent error: {err_msg}", {"error": err_msg})
+
         except Exception as e:
-            emit("agent_error", f"Implement error: {e}", {"error": str(e)})
-        return {"status": "implemented"}
+            emit("agent_error", f"Implementation failed: {e}", {"error": str(e)})
+            import traceback
+            emit("agent_error", traceback.format_exc()[-500:], {"traceback": True})
+
+        emit("agent_step", "✓ Implementation complete", {"step": "implement_done"})
+        return {"status": "implemented", "files_changed": files_created, "commands_executed": commands_run}
 
     # ------------------------------------------------------------------
-    # NODE: BUILD
+    # NODE: BUILD CHECK
     # ------------------------------------------------------------------
-    def build_node(state: AgentWorkflowState):
-        emit("agent_step", "Running build...", {"step": "build"})
+    async def build_node(state: AgentWorkflowState):
+        emit("agent_step", "🔨 Checking build...", {"step": "build"})
         pkg_path = os.path.join(state["project_path"], "package.json")
         if os.path.exists(pkg_path):
+            emit("agent_reasoning", "Running `npm run build` to verify the project compiles...", {})
             try:
                 res = subprocess.run(
                     "npm run build",
@@ -166,10 +236,12 @@ RULES:
                 )
                 output = ((res.stdout or "") + (res.stderr or ""))[-3000:]
                 if res.returncode == 0:
-                    emit("build_result", "Build successful", {"passed": True, "output": output})
+                    emit("build_result", "✓ Build successful!", {"passed": True, "output": output})
+                    emit("agent_reasoning", "Build passed! The project compiles correctly.", {})
                     return {"build_report": f"BUILD PASSED\n\n{output}", "status": "built"}
                 else:
-                    emit("build_result", "Build failed", {"passed": False, "output": output})
+                    emit("build_result", "✗ Build failed", {"passed": False, "output": output})
+                    emit("agent_reasoning", f"Build failed. I need to fix the errors:\n{output[:500]}", {})
                     return {
                         "build_report": f"BUILD FAILED\n\n{output}",
                         "status": "build_failed",
@@ -188,101 +260,101 @@ RULES:
         index_file = os.path.join(state["project_path"], "index.html")
         main_py = os.path.join(state["project_path"], "main.py")
         if os.path.exists(index_file) or os.path.exists(main_py):
-            emit("build_result", "Application files verified", {"passed": True})
+            emit("build_result", "✓ Application files verified", {"passed": True})
+            emit("agent_reasoning", "Files are present. No build step needed for this project type.", {})
             return {"build_report": "Files present.", "status": "built"}
-        emit("build_result", "No recognizable entry point", {"passed": False})
-        return {"build_report": "No index.html or main.py found.", "status": "build_failed", "errors": ["No entry point"]}
-
-    # ------------------------------------------------------------------
-    # NODE: TEST
-    # ------------------------------------------------------------------
-    def test_node(state: AgentWorkflowState):
-        emit("agent_step", "Running tests...", {"step": "test"})
-        # Try to run the test suite, but don't fail the whole pipeline if no tests exist
-        try:
-            res = subprocess.run(
-                "npm test -- --watchAll=false 2>&1 || true",
-                shell=True, cwd=state["project_path"],
-                capture_output=True, text=True, timeout=120,
-            )
-            output = (res.stdout or "")[-1500:]
-            if res.returncode == 0:
-                emit("test_result", "Tests passed", {"passed": True})
-                return {"test_report": f"TESTS PASSED\n{output}", "status": "tested"}
-            else:
-                emit("test_result", "Tests failed", {"passed": False, "output": output})
-                return {"test_report": f"TESTS FAILED\n{output}", "status": "test_failed"}
-        except Exception as e:
-            # No test framework — treat as neutral (build status dominates)
-            emit("test_result", f"No tests detected ({e})", {"passed": None})
-            return {"test_report": "No tests detected.", "status": "tested"}
+        emit("build_result", "⚠ No recognizable entry point found", {"passed": False})
+        emit("agent_reasoning", "Warning: no index.html or main.py found. The build may be incomplete.", {})
+        return {"build_report": "No entry point found.", "status": "build_failed", "errors": ["No entry point"]}
 
     # ------------------------------------------------------------------
     # NODE: EVALUATE
     # ------------------------------------------------------------------
-    def evaluate_node(state: AgentWorkflowState):
-        emit("agent_step", "Evaluating result & checking for browser testing...", {"step": "evaluate"})
-        # Optional: run browser_test.py if enabled
-        if enable_browser_testing and os.path.exists(os.path.join(state["project_path"], "browser_test.py")):
-            emit("agent_step", "Running browser_test.py (Playwright)...", {"step": "browser_test"})
-            try:
-                res = subprocess.run(
-                    ["python", "browser_test.py"],
-                    cwd=state["project_path"],
-                    capture_output=True, text=True, timeout=120,
-                )
-                out = (res.stdout or "") + (res.stderr or "")
-                if res.returncode == 0:
-                    emit("browser_test_result", "Browser test passed", {"passed": True, "output": out[-1000:]})
-                    return {"test_report": state.get("test_report", "") + f"\nBROWSER TEST PASSED\n{out[-500:]}", "status": "passed"}
-                else:
-                    emit("browser_test_result", "Browser test failed", {"passed": False, "output": out[-1500:]})
-                    return {
-                        "test_report": state.get("test_report", "") + f"\nBROWSER TEST FAILED\n{out[-1000:]}",
-                        "status": "failed",
-                        "errors": [out[-500:]],
-                    }
-            except Exception as e:
-                emit("browser_test_result", f"Browser test error: {e}", {"passed": False})
-        # No browser test → use the build status
+    async def evaluate_node(state: AgentWorkflowState):
+        emit("agent_step", "📊 Evaluating result...", {"step": "evaluate"})
         if state.get("status") == "build_failed":
+            emit("agent_reasoning", "Build failed — will attempt repair.", {})
             return {"status": "failed"}
+        emit("agent_reasoning", "Build succeeded! Application is ready.", {})
         return {"status": "passed"}
 
     # ------------------------------------------------------------------
-    # NODE: REPAIR
+    # NODE: REPAIR (streamed)
     # ------------------------------------------------------------------
-    def repair_node(state: AgentWorkflowState):
+    async def repair_node(state: AgentWorkflowState):
         attempts = state.get("repair_attempts", 0) + 1
-        emit("agent_step", f"Repairing (attempt {attempts})...", {"step": "repair", "attempt": attempts})
-        report = state.get("test_report", "") or state.get("build_report", "")
+        max_att = state.get("max_repair_attempts", 3)
+        emit("agent_step", f"🔧 Repairing (attempt {attempts}/{max_att})...", {"step": "repair", "attempt": attempts})
+
+        report = state.get("build_report", "") or state.get("test_report", "")
         report = report[-2000:]
-        prompt = f"""Fix the failing build/test in {state['project_path']}.
+
+        prompt = f"""The build failed in {state['project_path']}. Fix the issue.
 
 USER REQUEST:
 {state['user_request']}
 
-ERROR REPORT:
+BUILD ERROR:
 {report}
 
-1. Inspect project files with list_directory() and read_file().
-2. Identify root cause.
-3. Fix with write_file() or edit_file().
-4. Do NOT fake test results.
+INSTRUCTIONS:
+1. Call list_directory() to see current files.
+2. Call read_file() on the file that's likely causing the error.
+3. Use edit_file() or write_file() to fix the issue.
+4. Do NOT fake success — actually fix the root cause.
 """
+
+        emit("agent_reasoning", f"Repair attempt {attempts}. Analyzing the build error and fixing the root cause...", {})
+
         try:
-            deep_agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+            async for event in deep_agent.astream_events(
+                {"messages": [{"role": "user", "content": prompt}]},
+                version="v2",
+            ):
+                evt_type = event.get("event", "")
+                evt_name = event.get("name", "")
+                evt_data = event.get("data", {})
+
+                if evt_type == "on_chat_model_stream":
+                    chunk = evt_data.get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        emit("agent_token", chunk.content, {})
+
+                elif evt_type == "on_tool_start":
+                    tool_input = evt_data.get("input", {})
+                    if evt_name == "write_file":
+                        fname = tool_input.get("filename", "?") if isinstance(tool_input, dict) else "?"
+                        emit("file_creating", f"Writing {fname}...", {"filename": fname})
+                        emit("agent_reasoning", f"Rewriting file: {fname}", {})
+                    elif evt_name == "edit_file":
+                        fname = tool_input.get("filename", "?") if isinstance(tool_input, dict) else "?"
+                        emit("file_editing", f"Editing {fname}...", {"filename": fname})
+                        emit("agent_reasoning", f"Patching file: {fname}", {})
+                    elif evt_name == "read_file":
+                        fname = tool_input.get("filename", "?") if isinstance(tool_input, dict) else "?"
+                        emit("agent_reasoning", f"Reading {fname} to understand the issue...", {})
+                    elif evt_name == "run_terminal":
+                        cmd = tool_input.get("command", "?") if isinstance(tool_input, dict) else "?"
+                        emit("command_running", f"$ {cmd}", {"command": cmd, "cwd": project_path})
+                    elif evt_name == "list_directory":
+                        emit("agent_reasoning", "Listing workspace to inspect current state...", {})
+
+                elif evt_type == "on_tool_end":
+                    output = evt_data.get("output", "")
+                    output_str = str(output)[:300] if output else ""
+                    if evt_name in ("read_file", "list_directory"):
+                        emit("agent_reasoning", f"Result: {output_str[:200]}", {})
+
         except Exception as e:
-            emit("agent_error", f"Repair error: {e}", {"error": str(e)})
+            emit("agent_error", f"Repair failed: {e}", {"error": str(e)})
+
         return {"repair_attempts": attempts, "status": "repairing"}
 
     # ------------------------------------------------------------------
     # NODE: COMPLETE
     # ------------------------------------------------------------------
-    def complete_node(state: AgentWorkflowState):
-        import time
-        emit("agent_step", "Finalizing...", {"step": "complete"})
-        # Optionally propose an experience if we repaired something
+    async def complete_node(state: AgentWorkflowState):
+        emit("agent_step", "✅ Finalizing...", {"step": "complete"})
         proposal = None
         if state.get("repair_attempts", 0) > 0 and state.get("status") == "passed":
             proposal = experience_network.propose_from_success(
@@ -293,6 +365,7 @@ ERROR REPORT:
                 tags=["auto-proposed"],
             ).dict()
             emit("experience_proposed", "Experience candidate created from successful repair.", {"experience": proposal})
+        emit("agent_reasoning", "All done! Your application is ready to use.", {})
         return {"status": "complete", "finished_at": time.time(), "experience_proposal": proposal}
 
     # ------------------------------------------------------------------
@@ -305,7 +378,7 @@ ERROR REPORT:
                 max_att = state.get("max_repair_attempts", settings.agent.get("max_repair_attempts", 3))
                 if attempts < max_att:
                     return "repair"
-        return "test"
+        return "evaluate"
 
     def route_after_evaluate(state: AgentWorkflowState):
         if state.get("status") == "failed" and state.get("auto_repair", True):
@@ -320,23 +393,17 @@ ERROR REPORT:
     # ------------------------------------------------------------------
     builder = StateGraph(AgentWorkflowState)
     builder.add_node("analyze", analyze_node)
-    builder.add_node("plan", plan_node)
-    builder.add_node("inspect", inspect_node)
     builder.add_node("implement", implement_node)
     builder.add_node("build", build_node)
-    builder.add_node("test", test_node)
     builder.add_node("evaluate", evaluate_node)
     builder.add_node("repair", repair_node)
     builder.add_node("complete", complete_node)
 
     builder.add_edge(START, "analyze")
-    builder.add_edge("analyze", "plan")
-    builder.add_edge("plan", "inspect")
-    builder.add_edge("inspect", "implement")
+    builder.add_edge("analyze", "implement")
     builder.add_edge("implement", "build")
-    builder.add_conditional_edges("build", route_after_build, {"repair": "repair", "test": "test"})
-    builder.add_edge("test", "evaluate")
-    builder.add_conditional_edges("evaluate", route_after_evaluate, {"repair": "repair", "complete": "complete"})
+    builder.add_conditional_edges("build", route_after_build, {"repair": "repair", "evaluate": "evaluate"})
+    builder.add_edge("evaluate", "complete")
     builder.add_edge("repair", "build")
     builder.add_edge("complete", END)
 

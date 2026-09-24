@@ -576,13 +576,28 @@ async def run_agent_build(req: AgentBuildRequest):
         "experience_proposal": None,
     }
 
-    def execute_graph():
+    async def execute_graph_streaming():
+        """Run the graph with streaming, broadcasting each node update."""
         try:
-            return True, graph.invoke(initial_state)
+            final_state = None
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                # Each event is a dict of {node_name: state_update}
+                for node_name, state_update in event.items():
+                    if isinstance(state_update, dict):
+                        status = state_update.get("status", "")
+                        if status:
+                            broadcast_event("node_update", f"Node '{node_name}' → {status}", {
+                                "node": node_name, "status": status
+                            })
+                        final_state = state_update
+            return True, final_state or {"status": "complete"}
         except Exception as e:
+            import traceback
+            err_detail = traceback.format_exc()[-1000:]
+            broadcast_event("agent_error", f"Graph execution error: {e}", {"error": str(e), "traceback": err_detail})
             return False, str(e)
 
-    success, result = await asyncio.to_thread(execute_graph)
+    success, result = await execute_graph_streaming()
 
     broadcast_event("agent_finished", "\n=== NEXUS AGENT COMPLETED ===", {
         "success": success,
